@@ -1,0 +1,12 @@
+diff --git a/lib/frame_sync_impl.cc b/lib/frame_sync_impl.cc
+index 7b3f306..214c9b7 100644
+--- a/lib/frame_sync_impl.cc
++++ b/lib/frame_sync_impl.cc
+@@ -803,6 +803,7 @@ namespace gr
+                         frame_info = pmt::dict_add(frame_info, pmt::intern("cfo_int"), pmt::mp((long)m_cfo_int));
+                         frame_info = pmt::dict_add(frame_info, pmt::intern("cfo_frac"), pmt::mp((float)m_cfo_frac));
+                         frame_info = pmt::dict_add(frame_info, pmt::intern("sf"), pmt::mp((long)m_sf));
++                        frame_info = pmt::dict_add(frame_info, pmt::intern("snr"), pmt::mp((float)snr_est)); // umsh-sdr patch
+ 
+                         add_item_tag(0, nitems_written(0), pmt::string_to_symbol("frame_info"), frame_info);
+ 

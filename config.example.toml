@@ -1,0 +1,27 @@
+# umsh-sdr settings. Copy to config.toml and edit; everything is optional.
+# The [calibration] section is rewritten by `umsh-sdr calibrate ... --apply`.
+
+# data_dir = "data"                    # SQLite database, pcaps, reports
+dashboard_host = "127.0.0.1"
+dashboard_port = 8917
+
+# Test node for calibration (`umshctl -p <node_port> ping <ping_target>`)
+# umshctl = "/path/to/umshctl"         # default: found on PATH, else ~/.cargo/bin/umshctl
+node_port = "/dev/ttyACM0"
+ping_target = ""                       # base58 key of a node that answers pings
+
+[calibration]
+ppm = 0.0                              # run `umsh-sdr calibrate ppm --apply`
+gain_db = 49.6                         # run `umsh-sdr calibrate gain --apply`
+sweep_gain_db = 43.4
+# dbm_offset = -79.0                   # `calibrate level`; approximate (see README)
+
+[calibration.self_floor_dbfs]          # `calibrate selfnoise` with a 50 ohm terminator
+
+[schedule]
+channel_minutes = 55.0
+sweep_minutes = 5.0
+sweep_start_hz = 900000000
+sweep_stop_hz = 935000000
+sweep_bin_hz = 10000
+sweep_interval_s = 10

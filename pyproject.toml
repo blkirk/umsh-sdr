@@ -1,0 +1,15 @@
+[project]
+name = "umsh-sdr"
+version = "0.1.0"
+description = "RTL-SDR monitor for UMSH LoRa mesh traffic and adjacent RF noise"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+# numpy, matplotlib, GNU Radio, gr-osmosdr and gr-lora_sdr come from the system /
+# .prefix (see env.sh); only pure-Python extras live in the venv.
+dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.32"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

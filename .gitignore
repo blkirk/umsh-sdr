@@ -1,0 +1,13 @@
+# local settings (copy config.example.toml)
+config.toml
+# captures, database, pcaps, reports
+data/
+# build outputs and environments
+.venv/
+.prefix/
+third_party/gr-lora_sdr/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.u8
+*.cfile

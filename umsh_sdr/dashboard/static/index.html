@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UMSH SDR Monitor</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --border: #e2e1dc;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #85847f;
+  --grid: #ebeae6; --axis: #b9b8b2;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --band-shade: rgba(42,120,214,0.08);
+  --good: #0f7b3e; --critical: #c42b2b;
+  --seq: #fcfcfb,#cde2fb,#9ec5f4,#6da7ec,#3987e5,#256abf,#184f95,#0d366b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --grid: #262624; --axis: #4a4a46;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --band-shade: rgba(57,135,229,0.12);
+    --good: #3fb871; --critical: #e66767;
+    --seq: #1a1a19,#0d366b,#184f95,#256abf,#3987e5,#6da7ec,#9ec5f4,#cde2fb;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --grid: #262624; --axis: #4a4a46;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --band-shade: rgba(57,135,229,0.12);
+  --good: #3fb871; --critical: #e66767;
+  --seq: #1a1a19,#0d366b,#184f95,#256abf,#3987e5,#6da7ec,#9ec5f4,#cde2fb;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; padding: 16px 20px 4px; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; float: right; }
+.seg button { font: inherit; font-size: 12px; padding: 3px 10px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface-0); color: var(--text-primary); font-weight: 600; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+.chip.live::before { content: "●"; color: var(--good); margin-right: 4px; }
+.chip.off::before { content: "●"; color: var(--text-muted); margin-right: 4px; }
+main { padding: 8px 20px 32px; display: grid; gap: 16px; grid-template-columns: repeat(12, 1fr); }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.card .sub { color: var(--text-secondary); font-size: 12px; margin: 0 0 10px; }
+.span-12 { grid-column: span 12; } .span-6 { grid-column: span 6; } .span-3 { grid-column: span 3; }
+@media (max-width: 900px) { .span-6, .span-3 { grid-column: span 12; } }
+.tile .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .u { font-size: 13px; color: var(--text-secondary); margin-left: 4px; }
+.tile .k { font-size: 12px; color: var(--text-secondary); }
+.tile .n { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+canvas { display: block; width: 100%; }
+.chart { position: relative; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; color: var(--text-primary); white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; z-index: 2; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text-secondary); margin: 6px 0 0; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 1px; }
+.scale { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+.scale .bar { flex: 0 0 160px; height: 8px; border-radius: 4px; }
+.tablewrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+td.num, th.num { text-align: right; }
+td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.bad { color: var(--critical); } .ok { color: var(--good); }
+.muted { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>UMSH SDR Monitor</h1>
+  <span class="chip" id="live">connecting</span>
+  <span class="chip" id="mode">mode —</span>
+  <span class="chip" id="cal">—</span>
+</header>
+<main>
+  <section class="card tile span-3"><div class="k">Channel noise floor</div>
+    <div><span class="v" id="t-floor">—</span><span class="u" id="t-floor-u">dBFS/500k</span></div>
+    <div class="n" id="t-floor-n">917.25–917.75 MHz, UMSH packets excluded</div></section>
+  <section class="card tile span-3"><div class="k">Estimated desense</div>
+    <div><span class="v" id="t-des">—</span><span class="u">dB</span></div>
+    <div class="n" id="t-des-n">needs level calibration</div></section>
+  <section class="card tile span-3"><div class="k">Packets, last hour</div>
+    <div><span class="v" id="t-pk">—</span><span class="u" id="t-pk-u"></span></div>
+    <div class="n">CRC-valid / decoded by the SDR</div></section>
+  <section class="card tile span-3"><div class="k">Channel busy, last minute</div>
+    <div><span class="v" id="t-busy">—</span><span class="u">%</span></div>
+    <div class="n" id="t-busy-n">non-UMSH energy / UMSH packets</div></section>
+
+  <section class="card span-12">
+    <div class="seg" role="group" aria-label="Waterfall span"><button id="wf-v-center" aria-pressed="true">UMSH centred</button><button id="wf-v-full" aria-pressed="false">Full 2 MHz</button></div>
+    <h2>Live waterfall, <span id="wf-span">917.08–917.92 MHz</span></h2>
+    <p class="sub">Newest at top, 100 ms rows (max-hold). The bracket marks the UMSH channel. The SDR is tuned 500 kHz below it, so the full capture is off-centre by design (keeps the DC spike out of the channel).</p>
+    <div class="chart" id="wf-wrap"><canvas id="wf" height="300"></canvas><div class="tip" id="wf-tip"></div></div>
+    <div class="scale"><span id="wf-lo">—</span><span class="bar" id="wf-bar"></span><span id="wf-hi">—</span><span>dBFS per bin</span></div>
+  </section>
+
+  <section class="card span-6">
+    <h2>Noise floor by band, last 30 min</h2>
+    <p class="sub">Per-second p10 of 10 ms frames, in dBFS per 500 kHz so bands compare directly. Current gain only; gaps are sweeps or restarts.</p>
+    <div class="chart" id="fl-wrap"><canvas id="fl" height="260"></canvas><div class="tip" id="fl-tip"></div></div>
+    <div class="legend" id="fl-legend"></div>
+  </section>
+
+  <section class="card span-6">
+    <h2>Latest wideband sweep, 900–935 MHz</h2>
+    <p class="sub" id="sw-sub">rtl_power relative dB. Shaded: known services.</p>
+    <div class="chart" id="sw-wrap"><canvas id="sw" height="260"></canvas><div class="tip" id="sw-tip"></div></div>
+    <div class="legend" id="sw-legend"></div>
+  </section>
+
+  <section class="card span-12">
+    <h2>Decoded packets</h2>
+    <p class="sub">RSSI is in-channel power during the packet. SNR is the preamble estimate for weak frames and the power ratio for strong ones. Clipped means the ADC saturated, so RSSI is a lower bound. SRC/DST are the first 4 base58 characters of each key (* where a 3-byte hint can't fix the 4th); "all" is a broadcast, "ch" a multicast channel id, "enc" an address inside an encrypted body, and MAC acks carry none. Hover for the packet type.</p>
+    <div class="tablewrap"><table id="pk"><thead><tr>
+      <th>Time</th><th>SRC</th><th>DST</th><th class="num">Len</th><th>CRC</th><th class="num">RSSI dBFS</th><th class="num">RSSI dBm</th>
+      <th class="num">SNR dB</th><th class="num">CFO Hz</th><th class="num">Air ms</th><th>Flags</th><th>UMSH</th><th>Payload</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="card span-12">
+    <div class="seg" role="group" aria-label="Node window"><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
+    <h2>Nodes heard</h2>
+    <p class="sub" id="nd-sum">—</p>
+    <p class="sub">One row per key (grouped by its first 3 bytes). Sent packets split into good (clean), weak (below the noise floor) and clipped (ADC saturated, so RSSI is a lower bound); good + weak + clipped = sent. Packets with a bad CRC can't be attributed to a node and only count in the totals. Median SNR is over packets the node sent.</p>
+    <div class="tablewrap"><table id="nd"><thead><tr>
+      <th>Key</th><th class="num">Sent (SRC)</th><th class="num">Received (DST)</th><th class="num">Good</th><th class="num">Weak</th>
+      <th class="num">Clipped</th><th class="num">Median SNR dB</th><th>Last seen</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="card span-12">
+    <h2>Other emissions (not UMSH)</h2>
+    <p class="sub">Anything 10 dB over the per-bin floor. Narrowband is under 60 kHz (typical of FHSS meters and RFID). Continuous means 10 s or longer.</p>
+    <div class="tablewrap"><table id="em"><thead><tr>
+      <th>Time</th><th class="num">Freq MHz</th><th class="num">BW kHz</th><th class="num">Dur ms</th>
+      <th class="num">Peak dBFS</th><th class="num">Above floor dB</th><th>Class</th><th>In channel</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const BANDS = [["channel", "UMSH channel", "--series-1"], ["adj_low", "Below (916.08–917.25)", "--series-2"],
+               ["adj_high", "Above (917.75–917.92)", "--series-3"]];
+let STATUS = null;
+const fmtT = (t) => new Date(t * 1000).toLocaleTimeString([], {hour12: false});
+const f1 = (v) => v == null ? "—" : v.toFixed(1);
+
+// ---------- canvas helpers ----------
+function fit(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = +c.getAttribute("height");
+  if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.height = h + "px"; }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); return [g, w, h];
+}
+function niceTicks(lo, hi, n) {
+  const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 5, 10].map(m => m * mag).find(s => s >= step0);
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6)); return out;
+}
+function lineChart(canvas, tip, series, opts) {
+  // series: [{name, color, pts: [[x,y],...]}]; one y-axis only.
+  const [g, W, H] = fit(canvas); g.clearRect(0, 0, W, H);
+  const M = {l: 44, r: opts.rightPad ?? 96, t: 8, b: 24};
+  const xs = series.flatMap(s => s.pts.map(p => p[0])), ys = series.flatMap(s => s.pts.filter(p => p[1] != null).map(p => p[1]));
+  if (!xs.length || !ys.length) { g.fillStyle = css("--text-muted"); g.font = "12px system-ui"; g.fillText(opts.empty || "no data yet", M.l, H / 2); return; }
+  const x0 = opts.x0 ?? Math.min(...xs), x1 = opts.x1 ?? Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = Math.max(1, (y1 - y0) * 0.1); y0 -= pad; y1 += pad;
+  const X = (x) => M.l + (x - x0) / (x1 - x0 || 1) * (W - M.l - M.r), Y = (y) => M.t + (y1 - y) / (y1 - y0) * (H - M.t - M.b);
+  (opts.shades || []).forEach(([a, b, label]) => {
+    if (b < x0 || a > x1) return; g.fillStyle = css("--band-shade");
+    const xa = X(Math.max(a, x0)), xb = X(Math.min(b, x1)); g.fillRect(xa, M.t, Math.max(1, xb - xa), H - M.t - M.b);
+    g.fillStyle = css("--text-muted"); g.font = "10px system-ui"; if (xb - xa > 30 || opts.labelThin) g.fillText(label, xa + 2, M.t + 10);
+  });
+  g.strokeStyle = css("--grid"); g.lineWidth = 1; g.fillStyle = css("--text-secondary"); g.font = "11px system-ui";
+  niceTicks(y0, y1, 4).forEach(v => { const y = Math.round(Y(v)) + .5; g.beginPath(); g.moveTo(M.l, y); g.lineTo(W - M.r, y); g.stroke(); g.fillText(v, 4, y + 4); });
+  const xt = opts.xticks ? opts.xticks(x0, x1) : niceTicks(x0, x1, 5);
+  xt.forEach(v => { const x = X(v); g.fillText(opts.xfmt ? opts.xfmt(v) : v, x - 14, H - 6); });
+  g.strokeStyle = css("--axis"); g.beginPath(); g.moveTo(M.l, H - M.b + .5); g.lineTo(W - M.r, H - M.b + .5); g.stroke();
+  series.forEach(s => {
+    g.strokeStyle = s.color; g.lineWidth = 2; g.lineJoin = "round"; g.beginPath(); let pen = false;
+    let px = null;
+    s.pts.forEach(([x, y]) => {
+      if (y == null || (opts.maxGap && px != null && x - px > opts.maxGap)) pen = false;  // don't bridge outages
+      if (y == null) return;
+      pen ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)); pen = true; px = x;
+    });
+    g.stroke();
+  });
+  if (opts.direct !== false) {  // direct labels at line ends, pushed apart so they never overlap
+    const ends = series.map(s => [s, [...s.pts].reverse().find(p => p[1] != null)]).filter(e => e[1])
+      .map(([s, p]) => ({t: s.short || s.name, x: X(p[0]) + 6, y: Y(p[1]) + 4})).sort((a, b) => a.y - b.y);
+    ends.forEach((e, i) => { if (i && e.y < ends[i - 1].y + 13) e.y = ends[i - 1].y + 13; });
+    g.fillStyle = css("--text-secondary"); g.font = "11px system-ui"; ends.forEach(e => g.fillText(e.t, e.x, e.y));
+  }
+  canvas.onmousemove = (ev) => {
+    const r = canvas.getBoundingClientRect(), mx = ev.clientX - r.left;
+    if (mx < M.l || mx > W - M.r) { tip.style.display = "none"; return; }
+    const xv = x0 + (mx - M.l) / (W - M.l - M.r) * (x1 - x0);
+    const rows = series.map(s => { let best = null; for (const p of s.pts) if (best == null || Math.abs(p[0] - xv) < Math.abs(best[0] - xv)) best = p; return [s, best]; });
+    lineChart(canvas, tip, series, opts);
+    const [g2] = fit(canvas); g2.strokeStyle = css("--axis"); g2.beginPath(); g2.moveTo(mx + .5, M.t); g2.lineTo(mx + .5, H - M.b); g2.stroke();
+    rows.forEach(([s, p]) => { if (p && p[1] != null) { g2.fillStyle = css("--surface-1"); g2.beginPath(); g2.arc(X(p[0]), Y(p[1]), 5, 0, 7); g2.fill(); g2.fillStyle = s.color; g2.beginPath(); g2.arc(X(p[0]), Y(p[1]), 4, 0, 7); g2.fill(); } });
+    tip.innerHTML = `<b>${opts.xfmtLong ? opts.xfmtLong(xv) : xv.toFixed(2)}</b><br>` +
+      rows.map(([s, p]) => `<span style="color:${s.color}">■</span> ${s.name}: ${p && p[1] != null ? p[1].toFixed(1) : "—"} ${opts.unit || ""}`).join("<br>");
+    tip.style.display = "block"; tip.style.left = Math.min(mx + 12, W - tip.offsetWidth - 4) + "px"; tip.style.top = "8px";
+  };
+  canvas.onmouseleave = () => { tip.style.display = "none"; lineChart(canvas, tip, series, opts); };
+}
+function legend(el, series) { el.innerHTML = series.map(s => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join(""); }
+
+// ---------- waterfall ----------
+const WF = {rows: [], times: [], max: 300, lo: null, hi: null, view: "center"};
+try { if (localStorage.getItem("wfView") === "full") WF.view = "full"; } catch (e) {}
+// Visible span [f0, f1] in Hz. "center": 917.5 MHz ± 420 kHz, the widest symmetric window
+// that the 2 MS/s capture (916.0–918.0) covers inside its filter-roll-off guard.
+function wfSpan() {
+  const c0 = STATUS.lo_hz - STATUS.sample_rate / 2, c1 = STATUS.lo_hz + STATUS.sample_rate / 2;
+  if (WF.view === "full") return [c0, c1];
+  const mid = (STATUS.channel[0] + STATUS.channel[1]) / 2, half = Math.min(c1 - mid, mid - c0) - 80e3;
+  return [mid - half, mid + half];
+}
+function wfBins(n) {  // bin range [i0, i1) of the visible span
+  const c0 = STATUS.lo_hz - STATUS.sample_rate / 2, df = STATUS.sample_rate / n, [f0, f1] = wfSpan();
+  return [Math.max(0, Math.round((f0 - c0) / df)), Math.min(n, Math.round((f1 - c0) / df))];
+}
+function setView(v) {
+  WF.view = v; try { localStorage.setItem("wfView", v); } catch (e) {}
+  $("wf-v-center").setAttribute("aria-pressed", v === "center"); $("wf-v-full").setAttribute("aria-pressed", v === "full");
+  if (STATUS) { const [a, b] = wfSpan(); $("wf-span").textContent = `${(a / 1e6).toFixed(2)}–${(b / 1e6).toFixed(2)} MHz`; }
+  drawWF();
+}
+$("wf-v-center").onclick = () => setView("center"); $("wf-v-full").onclick = () => setView("full");
+function seqColor(t) {
+  const stops = css("--seq").split(",").map(s => s.trim()); t = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(t)), f = t - i, a = hex(stops[i]), b = hex(stops[i + 1]);
+  return [0, 1, 2].map(k => Math.round(a[k] + (b[k] - a[k]) * f));
+}
+function hex(h) { h = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16)); }
+function drawWF() {
+  const c = $("wf"), [g, W, H] = fit(c); g.clearRect(0, 0, W, H);
+  if (!WF.rows.length) { g.fillStyle = css("--text-muted"); g.font = "12px system-ui"; g.fillText(STATUS && !STATUS.live ? "dashboard is not attached to the radio (run `umsh-sdr run`)" : "waiting for spectrum…", 8, 20); return; }
+  const n = WF.rows[0].length, img = g.createImageData(n, WF.rows.length);
+  const lut = Array.from({length: 256}, (_, i) => seqColor(i / 255));
+  WF.rows.forEach((row, y) => row.forEach((v, x) => {
+    const t = Math.round(255 * (v - WF.lo) / (WF.hi - WF.lo)), col = lut[Math.max(0, Math.min(255, t))], o = (y * n + x) * 4;
+    img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+  }));
+  const off = new OffscreenCanvas(n, WF.rows.length); off.getContext("2d").putImageData(img, 0, 0);
+  const [i0, i1] = wfBins(n), [s0, s1] = wfSpan();
+  g.imageSmoothingEnabled = false; const AX = 18;
+  g.drawImage(off, i0, 0, i1 - i0, WF.rows.length, 0, 0, W, Math.min(H - AX, WF.rows.length * (H - AX) / WF.max));
+  const fx = (hz) => (hz - s0) / (s1 - s0) * W, step = WF.view === "full" ? 0.25 : 0.1;
+  const [a, b] = STATUS.channel; g.strokeStyle = css("--text-secondary"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(fx(a), H - AX); g.lineTo(fx(a), H - AX - 6); g.moveTo(fx(a), H - AX - 3); g.lineTo(fx(b), H - AX - 3); g.moveTo(fx(b), H - AX); g.lineTo(fx(b), H - AX - 6); g.stroke();
+  g.fillStyle = css("--text-secondary"); g.font = "11px system-ui";
+  for (let k = Math.ceil(s0 / 1e6 / step - 1e-6); k * step <= s1 / 1e6 + 1e-6; k++) { const mhz = k * step, x = fx(mhz * 1e6); if (x > 10 && x < W - 30) g.fillText(mhz.toFixed(step < .25 ? 1 : 2), x - 14, H - 4); }
+  const grad = `linear-gradient(90deg, ${Array.from({length: 8}, (_, i) => `rgb(${seqColor(i / 7)})`).join(",")})`;
+  $("wf-bar").style.background = grad; $("wf-lo").textContent = WF.lo.toFixed(0); $("wf-hi").textContent = WF.hi.toFixed(0);
+}
+$("wf").onmousemove = (ev) => {
+  if (!WF.rows.length) return; const c = $("wf"), r = c.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const H = c.clientHeight - 18, row = Math.floor(y / (H / WF.max)); if (row >= WF.rows.length || y > H) { $("wf-tip").style.display = "none"; return; }
+  const n = WF.rows[0].length, [i0, i1] = wfBins(n), bin = Math.min(i1 - 1, i0 + Math.floor(x / r.width * (i1 - i0))), f = STATUS.lo_hz - STATUS.sample_rate / 2 + (bin + .5) / n * STATUS.sample_rate;
+  const tp = $("wf-tip"); tp.innerHTML = `${(f / 1e6).toFixed(3)} MHz · ${fmtT(WF.times[row])}<br>${WF.rows[row][bin].toFixed(1)} dBFS`;
+  tp.style.display = "block"; tp.style.left = Math.min(x + 12, r.width - 140) + "px"; tp.style.top = Math.max(0, y - 40) + "px";
+};
+$("wf").onmouseleave = () => $("wf-tip").style.display = "none";
+function onWF(d) {
+  WF.rows.unshift(d.row); WF.times.unshift(d.t); if (WF.rows.length > WF.max) { WF.rows.pop(); WF.times.pop(); }
+  const s = [...d.row].sort((a, b) => a - b), lo = s[Math.floor(s.length * .1)] - 3;
+  WF.lo = WF.lo == null ? lo : WF.lo * .97 + lo * .03; WF.hi = WF.lo + 45;
+}
+
+// ---------- floor chart ----------
+const FL = {}; BANDS.forEach(([k]) => FL[k] = []);
+function drawFL() {
+  const series = BANDS.map(([k, name, col]) => ({name, short: k === "channel" ? "UMSH" : (k === "adj_low" ? "below" : "above"), color: css(col),
+    pts: FL[k].map(r => [r[0], r[1]])}));
+  const now = Date.now() / 1000;
+  lineChart($("fl"), $("fl-tip"), series, {x0: now - 1800, x1: now, unit: "dBFS/500k", rightPad: 56, maxGap: 5,
+    xticks: (a, b) => niceTicks(a, b, 5), xfmt: (v) => new Date(v * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false}),
+    xfmtLong: fmtT});
+  legend($("fl-legend"), series);
+}
+// ---------- sweep ----------
+const SERVICES = [[869e6, 894e6, "Cellular DL"], [902e6, 928e6, "ISM"], [906.75e6, 907e6, "Meshtastic"], [910.49e6, 910.56e6, "MeshCore"],
+                  [917.25e6, 917.75e6, "UMSH"], [929e6, 932e6, "Paging"]];
+let SW = null;
+function drawSW() {
+  if (!SW) { lineChart($("sw"), $("sw-tip"), [], {empty: "no sweep yet (runs between channel sessions)"}); return; }
+  const fr = (i) => (SW.f0_hz + i * SW.df_hz) / 1e6;
+  const series = [{name: "Max hold", short: "max", color: css("--series-2"), pts: SW.maxhold.map((v, i) => [fr(i), v])},
+                  {name: "Median", short: "median", color: css("--series-1"), pts: SW.p50.map((v, i) => [fr(i), v])}];
+  lineChart($("sw"), $("sw-tip"), series, {unit: "dB", rightPad: 52, shades: SERVICES.map(([a, b, l]) => [a / 1e6, b / 1e6, l]),
+    xfmtLong: (v) => v.toFixed(3) + " MHz"});
+  legend($("sw-legend"), series);
+  $("sw-sub").textContent = `${new Date(SW.ts * 1000).toLocaleString()} · gain ${SW.gain_db} dB · rtl_power relative dB · shaded: known services`;
+}
+// ---------- tables ----------
+function pkRow(p) {
+  let u = ""; if (p.umsh) { try { const j = typeof p.umsh === "string" ? JSON.parse(p.umsh) : p.umsh;
+    u = Object.entries(j).filter(([k]) => k.startsWith("umsh.")).slice(0, 4).map(([k, v]) => `${k.slice(5)}=${v}`).join(" "); } catch (e) {} }
+  const flags = [p.matched ? "" : "weak", (p.clipped || 0) > 1e-3 ? "clipped" : ""].filter(Boolean).join(", ");
+  const a = p.crc_ok ? p.addr : null, ttl = a ? ` title="${a.type}"` : "";
+  const ad = (v) => v ? (v.startsWith("enc") ? `<span class="muted">${v}</span>` : `<span class="hex">${v}</span>`) : `<span class="muted">${a && a.type === "UACK" ? "ack" : "—"}</span>`;
+  return `<tr><td>${fmtT(p.ts)}</td><td${ttl}>${ad(a && a.src)}</td><td${ttl}>${ad(a && a.dst)}</td><td class="num">${p.pay_len}</td><td class="${p.crc_ok ? "ok" : "bad"}">${p.crc_ok ? "✓ ok" : "✗ bad"}</td>
+    <td class="num">${f1(p.rssi_dbfs)}</td><td class="num">${f1(p.rssi_dbm)}</td><td class="num">${f1(p.snr_db)}</td>
+    <td class="num">${p.cfo_hz == null ? "—" : Math.round(p.cfo_hz)}</td><td class="num">${p.airtime_ms == null ? "—" : Math.round(p.airtime_ms)}</td>
+    <td class="muted">${flags}</td><td>${u || '<span class="muted">—</span>'}</td><td class="hex">${(p.payload_hex || p.payload || "").slice(0, 64)}</td></tr>`;
+}
+function emRow(e) {
+  return `<tr><td>${fmtT(e.ts)}</td><td class="num">${(e.f_center_hz / 1e6).toFixed(3)}</td><td class="num">${(e.bw_hz / 1e3).toFixed(0)}</td>
+    <td class="num">${Math.round((e.ts_end - e.ts) * 1e3)}</td><td class="num">${f1(e.peak_dbfs)}</td><td class="num">${f1(e.above_floor_db)}</td>
+    <td>${e.cls}</td><td>${e.in_channel ? "yes" : "no"}</td></tr>`;
+}
+const PK = [], EM = [];
+// ---------- nodes heard ----------
+const ND = {hours: 24, data: null, pending: null};
+try { const h = localStorage.getItem("ndHours"); if (h != null && ["0", "1", "24"].includes(h)) ND.hours = +h; } catch (e) {}
+function ndButtons() { document.querySelectorAll("[data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === ND.hours)); }
+document.querySelectorAll("[data-h]").forEach(b => b.onclick = () => {
+  ND.hours = +b.dataset.h; try { localStorage.setItem("ndHours", ND.hours); } catch (e) {} ndButtons(); loadNodes(); });
+async function loadNodes() {
+  try { ND.data = await j(`/api/nodes?hours=${ND.hours}`); renderNodes(); } catch (e) { console.error(e); }
+}
+function nodesSoon() { if (!ND.pending) ND.pending = setTimeout(() => { ND.pending = null; loadNodes(); }, 3000); }
+function renderNodes() {
+  const d = ND.data; if (!d) return; const t = d.totals, n0 = (v) => v ? v : '<span class="muted">0</span>';
+  const pct = (v) => t.decoded ? ` (${(100 * v / t.decoded).toFixed(0)}%)` : "";
+  $("nd-sum").textContent = `${ND.hours ? `Last ${ND.hours} h` : "All time"}: ${t.src_keys} unique SRC keys, ${t.dst_keys} unique DST keys. ` +
+    `${t.decoded} packets decoded: ${t.good} good${pct(t.good)}, ${t.weak} weak${pct(t.weak)}, ${t.clipped} clipped${pct(t.clipped)}, ` +
+    `${t.crc_bad} bad CRC${pct(t.crc_bad)}` + (t.no_addr ? `; ${t.no_addr} CRC-ok with no node address (acks, encrypted).` : ".");
+  document.querySelector("#nd tbody").innerHTML = d.nodes.map(n => `<tr><td class="hex">${n.label}</td>
+    <td class="num">${n0(n.sent)}</td><td class="num">${n0(n.received)}</td><td class="num">${n0(n.good)}</td>
+    <td class="num">${n0(n.weak)}</td><td class="num">${n0(n.clipped)}</td><td class="num">${f1(n.snr_median)}</td>
+    <td>${new Date(n.last * 1000).toDateString() === new Date().toDateString() ? fmtT(n.last) : new Date(n.last * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">no addressed packets in this window</td></tr>`;
+}
+function renderTables() {
+  document.querySelector("#pk tbody").innerHTML = PK.slice(0, 200).map(pkRow).join("") || `<tr><td colspan="13" class="muted">no packets yet</td></tr>`;
+  document.querySelector("#em tbody").innerHTML = EM.slice(0, 200).map(emRow).join("") || `<tr><td colspan="8" class="muted">none yet</td></tr>`;
+}
+// ---------- tiles ----------
+function tiles() {
+  const ch = FL.channel.filter(r => r[1] != null).slice(-60);
+  if (ch.length) {
+    const fl = ch.map(r => r[1]).sort((a, b) => a - b)[Math.floor(ch.length / 2)], cal = STATUS.calibration;
+    $("t-floor").textContent = fl.toFixed(1);
+    if (cal.dbm_offset != null) $("t-floor-n").textContent = `≈ ${(fl + cal.dbm_offset).toFixed(0)} dBm (node-referenced, ±6 dB), UMSH packets excluded`;
+    const self = cal.self_floor_dbfs ? cal.self_floor_dbfs.channel : null;
+    if (self != null) {
+      const ex = fl - self, des = 10 * Math.log10(1 + Math.max(Math.pow(10, ex / 10) - 1, 0));
+      $("t-des").textContent = des.toFixed(1);
+      $("t-des-n").textContent = `noise ${ex >= 0 ? "+" : ""}${ex.toFixed(1)} dB above the SDR's own floor`;
+    } else { $("t-des-n").textContent = "needs `umsh-sdr calibrate selfnoise` (50 Ω terminator)"; }
+    const busy = ch.map(r => r[2] || 0), um = ch.map(r => r[3] || 0), avg = (a) => a.reduce((x, y) => x + y, 0) / a.length * 100;
+    $("t-busy").textContent = `${avg(busy).toFixed(1)} / ${avg(um).toFixed(1)}`;
+  }
+  $("t-pk").textContent = `${STATUS.crc_ok_1h} / ${STATUS.packets_1h}`;
+  const c = STATUS.calibration; $("cal").textContent = `ppm ${c.ppm} · gain ${c.gain_db} dB${c.dbm_offset != null ? ` · offset ${c.dbm_offset} dB` : " · no dBm cal"}`;
+}
+// ---------- data flow ----------
+async function j(u) { const r = await fetch(u); return r.json(); }
+async function poll() {
+  try {
+    STATUS = await j("/api/status");
+    const s = await j("/api/seconds?minutes=30"); BANDS.forEach(([k]) => FL[k] = s[k] || []);
+    PK.splice(0, PK.length, ...(await j("/api/packets?limit=200")));
+    EM.splice(0, EM.length, ...(await j("/api/emissions?limit=200")));
+    SW = await j("/api/sweep/latest");
+    loadNodes();
+    drawFL(); drawSW(); renderTables(); tiles();
+  } catch (e) { console.error(e); }
+}
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { $("live").textContent = "live"; $("live").className = "chip live"; };
+  ws.onclose = () => { $("live").textContent = STATUS && !STATUS.live ? "database only" : "disconnected"; $("live").className = "chip off"; setTimeout(connect, 5000); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data), d = m.data;
+    if (m.kind === "wf") onWF(d);
+    else if (m.kind === "packet") { PK.unshift(d); renderTables(); nodesSoon(); }
+    else if (m.kind === "dissected") { const p = PK.find(x => x.id === d.id); if (p) { p.umsh = d.umsh; renderTables(); } }
+    else if (m.kind === "emission") { EM.unshift({ts: d.ts, ts_end: d.ts + d.dur, f_center_hz: d.f, bw_hz: d.bw, peak_dbfs: d.peak, above_floor_db: d.above, cls: d.cls, in_channel: d.in_channel}); if (EM.length > 500) EM.pop(); }
+    else if (m.kind === "second") { BANDS.forEach(([k]) => { const b = d.bands[k]; if (b) FL[k].push([d.ts, b.floor, b.busy_other, b.busy_umsh]); }); }
+    else if (m.kind === "mode") $("mode").textContent = `mode: ${d.mode} until ${fmtT(d.until)}`;
+    else if (m.kind === "sweep") poll();
+  };
+}
+setInterval(() => { if (WF.rows.length) drawWF(); }, 200);
+setInterval(() => { drawFL(); tiles(); }, 2000);
+setInterval(poll, 15000);
+window.addEventListener("resize", () => { drawWF(); drawFL(); drawSW(); });
+ndButtons();
+poll().then(() => { setView(WF.view); connect(); });
+</script>
+</body>
+</html>
