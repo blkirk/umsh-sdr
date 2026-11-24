@@ -9,10 +9,11 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .. import config as C
 from ..db import DB, unf32
+from ..emission_buckets import buckets as emission_buckets
 from ..umsh_addr import parse as parse_addr, summarize
 
 STATIC = Path(__file__).parent / "static"
@@ -25,6 +26,9 @@ class Bus:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.clients: set[asyncio.Queue] = set()
         self.last: dict[str, dict] = {}
+        self.mode: dict = {}
+        self.request_sweep = None  # set by `umsh-sdr run`: () -> {"ok", "reason"|"seconds"}
+        self.sweep_seconds: float | None = None
 
     def publish(self, kind: str, data: dict):
         if kind == "wf":  # halve the row: max of bin pairs keeps narrow signals visible
@@ -33,6 +37,8 @@ class Bus:
         msg = json.dumps({"kind": kind, "data": data}, default=_jsonable)
         if kind in ("mode", "second"):
             self.last[kind] = msg
+        if kind == "mode":
+            self.mode = data
         loop = self.loop
         if loop is None:
             return
@@ -96,6 +102,8 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
                 "calibration": {"ppm": cal.ppm, "gain_db": cal.gain_db, "dbm_offset": cal.dbm_offset,
                                 "self_floor_dbfs": cal.self_floor_dbfs},
                 "reference": {"thermal_dbm": C.THERMAL_DBM, "sx1262_floor_dbm": C.SX1262_FLOOR_DBM},
+                "mode": bus.mode if bus else None,
+                "can_sweep": bool(bus and bus.request_sweep), "sweep_seconds": bus.sweep_seconds if bus else None,
                 "lo_hz": C.LO_HZ, "sample_rate": C.SAMPLE_RATE, "channel": C.BANDS["channel"],
                 "events": _rows(last)}
 
@@ -126,6 +134,33 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
         rows = db().query("SELECT ts, payload, crc_ok, matched, clipped, snr_db FROM packets WHERE ts >= ?", (t0,))
         return summarize([dict(r) for r in rows])
 
+    names_cache = {"mtime": None, "rows": []}
+
+    @app.get("/api/names")
+    def names():
+        """Key-hint -> node name pairs from name-hints.txt, re-read whenever the file changes."""
+        p = Path(settings.name_hints)
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            return []
+        if mtime != names_cache["mtime"]:
+            rows = []
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t", 1) if "\t" in line else line.split(None, 1)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                    rows.append([parts[0].strip(), parts[1].strip()])
+            names_cache.update(mtime=mtime, rows=rows)
+        return names_cache["rows"]
+
+    @app.get("/api/emissions/buckets")
+    def emissions_buckets(hours: float = 24, step_khz: float = 100):
+        t0 = 0 if hours <= 0 else time.time() - hours * 3600
+        return emission_buckets(db(), t0, max(1.0, step_khz) * 1e3)
+
     @app.get("/api/emissions")
     def emissions(limit: int = 100):
         return _rows(db().query("SELECT * FROM emissions ORDER BY ts DESC LIMIT ?", (min(limit, 1000),)))
@@ -138,6 +173,15 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
         r = r[0]
         return {"ts": r["ts"], "f0_hz": r["f0_hz"], "df_hz": r["df_hz"], "gain_db": r["gain_db"],
                 "p50": np.round(unf32(r["p50"]), 1).tolist(), "maxhold": np.round(unf32(r["maxhold"]), 1).tolist()}
+
+    @app.post("/api/sweep/now")
+    def sweep_now():
+        """Stop the channel capture and run one wideband sweep now; capture resumes after it."""
+        if bus is None or bus.request_sweep is None:
+            return JSONResponse({"ok": False, "reason": "dashboard is not attached to the radio (run `umsh-sdr run`)"},
+                                status_code=409)
+        r = bus.request_sweep()
+        return JSONResponse(r, status_code=202 if r["ok"] else 409)
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):

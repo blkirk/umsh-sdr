@@ -11,3 +11,6 @@ __pycache__/
 .pytest_cache/
 *.u8
 *.cfile
+
+# your node names (see name-hints.example.txt)
+name-hints.txt

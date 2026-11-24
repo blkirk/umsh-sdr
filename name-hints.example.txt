@@ -1,0 +1,3 @@
+# <key or hint>	<node name>, tab-separated, one per line. Copy to name-hints.txt.
+# A 4-character hint (as shown in the dashboard) or a full base58 key both work.
+5Xyz	Example Node

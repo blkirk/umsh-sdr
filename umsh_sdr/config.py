@@ -75,6 +75,7 @@ class Settings:
     umshctl: str = field(default_factory=lambda: shutil.which("umshctl")
                          or str(Path.home() / ".cargo/bin/umshctl"))
     node_port: str = "/dev/ttyACM0"
+    name_hints: str = str(ROOT / "name-hints.txt")  # "<key or hint>\t<node name>" per line
     ping_target: str = ""  # base58 key of a node that answers pings; set in config.toml
 
     @property

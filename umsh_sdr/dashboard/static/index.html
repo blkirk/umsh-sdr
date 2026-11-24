@@ -42,6 +42,11 @@ body { margin: 0; background: var(--surface-0); color: var(--text-primary);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; padding: 16px 20px 4px; }
 h1 { font-size: 18px; margin: 0; font-weight: 600; }
+.btn { float: right; font: inherit; font-size: 12px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-0); color: var(--text-primary); cursor: pointer; }
+.btn:hover:not(:disabled) { border-color: var(--text-secondary); }
+.btn:disabled { color: var(--text-muted); cursor: default; }
+.btn:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; float: right; }
 .seg button { font: inherit; font-size: 12px; padding: 3px 10px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--surface-0); color: var(--text-primary); font-weight: 600; }
@@ -78,6 +83,7 @@ th.sortable button:focus-visible { outline: 2px solid var(--series-1); outline-o
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-primary); }
 th .arrow { display: inline-block; width: 1em; text-align: center; }
 td.num, th.num { text-align: right; }
+span.hex { font-family: ui-monospace, monospace; font-size: 12px; }
 td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .bad { color: var(--critical); } .ok { color: var(--good); }
 .muted { color: var(--text-muted); }
@@ -120,6 +126,7 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
   </section>
 
   <section class="card span-6">
+    <button class="btn" id="sw-now" type="button" disabled>Sweep now</button>
     <h2>Latest wideband sweep, 900–935 MHz</h2>
     <p class="sub" id="sw-sub">rtl_power relative dB. Shaded: known services.</p>
     <div class="chart" id="sw-wrap"><canvas id="sw" height="260"></canvas><div class="tip" id="sw-tip"></div></div>
@@ -136,7 +143,7 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
   </section>
 
   <section class="card span-12">
-    <div class="seg" role="group" aria-label="Node window"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
+    <div class="seg" role="group" aria-label="Node window" id="nd-win"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
     <h2>Nodes heard</h2>
     <p class="sub" id="nd-sum">—</p>
     <p class="sub">One row per radio. <b>Created</b>/<b>Received</b>: packets naming it as SRC/DST, whoever transmitted them; <b>Last created</b> is its newest SRC packet. <b>On air</b>: packets this radio itself transmitted, which is what the SDR measured: its own unrelayed packets plus those it relayed (<b>Relayed</b>, named by the frame's Trace option). On air splits into good, weak (below the noise floor) and clipped (ADC saturated, RSSI a lower bound); median SNR is over On air. A repeater appears under its node key when its 2-byte repeater hint matches exactly one key seen, else as “XX* (repeater)”. Bad-CRC frames and frames relayed by an unnamed hop count only in the totals.</p>
@@ -154,6 +161,19 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
     <div class="tablewrap"><table id="em"><thead><tr>
       <th>Time</th><th class="num">Freq MHz</th><th class="num">BW kHz</th><th class="num">Dur ms</th>
       <th class="num">Peak dBFS</th><th class="num">Above floor dB</th><th>Class</th><th>In channel</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="card span-12">
+    <div class="seg" role="group" aria-label="Emission tally window" id="eb-win"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
+    <h2>Other emissions by frequency and bandwidth</h2>
+    <p class="sub" id="eb-sum">—</p>
+    <p class="sub">Emissions grouped into 100 kHz frequency slices and four bandwidth ranges (&lt; 25, 25–200, 200–600, ≥ 600 kHz). <b>Per hour</b> and <b>Duty</b> are per hour of channel capture in the window (nothing is recorded during sweeps). Duty is the share of capture time the bucket was occupied. Peak and above-floor are averages; Max peak is the strongest seen. Click a header to sort.</p>
+    <div class="tablewrap"><table id="eb"><thead><tr>
+      <th class="num" data-k="f_lo_hz">Freq MHz</th><th class="num" data-k="bw_bucket">BW kHz</th><th class="num" data-k="count">Count</th>
+      <th class="num" data-k="per_hour">Per hour</th><th class="num" data-k="duty_pct">Duty %</th><th class="num" data-k="dur_ms">Avg dur ms</th>
+      <th class="num" data-k="bw_khz">Avg BW kHz</th><th class="num" data-k="peak_dbfs">Avg peak dBFS</th><th class="num" data-k="peak_max_dbfs">Max peak dBFS</th>
+      <th class="num" data-k="above_db">Above floor dB</th><th data-k="in_channel">In channel</th><th data-k="last">Last seen</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 </main>
@@ -306,6 +326,26 @@ function drawFL() {
 const SERVICES = [[869e6, 894e6, "Cellular DL"], [902e6, 928e6, "ISM"], [906.75e6, 907e6, "Meshtastic"], [910.49e6, 910.56e6, "MeshCore"],
                   [917.25e6, 917.75e6, "UMSH"], [929e6, 932e6, "Paging"]];
 let SW = null;
+// ---------- sweep now ----------
+const SWN = {pending: false};
+function swButton() {
+  const b = $("sw-now"), st = STATUS || {}, mode = st.mode || {};
+  const mins = st.sweep_seconds ? Math.round(st.sweep_seconds / 60) : 5;
+  if (!st.can_sweep) { b.disabled = true; b.textContent = "Sweep now"; b.title = "Only available while `umsh-sdr run` is serving this page"; return; }
+  if (mode.mode === "sweep") { b.disabled = true; b.textContent = `Sweeping… until ${fmtT(mode.until)}`; b.title = "Packet capture resumes when the sweep ends"; return; }
+  if (SWN.pending) { b.disabled = true; b.textContent = "Starting sweep…"; b.title = ""; return; }
+  b.disabled = false; b.textContent = "Sweep now"; b.title = `Pause packet capture and sweep 900–935 MHz for about ${mins} min`;
+}
+$("sw-now").onclick = async () => {
+  const mins = STATUS && STATUS.sweep_seconds ? Math.round(STATUS.sweep_seconds / 60) : 5;
+  if (!confirm(`Pause packet capture and run a wideband sweep now?\n\nNo UMSH packets are decoded for about ${mins} minutes. Capture resumes automatically afterwards.`)) return;
+  SWN.pending = true; swButton();
+  try {
+    const r = await fetch("/api/sweep/now", {method: "POST"}), d = await r.json();
+    if (!d.ok) { SWN.pending = false; alert(`Sweep not started: ${d.reason}`); }
+  } catch (e) { SWN.pending = false; alert(`Sweep not started: ${e}`); }
+  swButton();
+};
 function drawSW() {
   if (!SW) { lineChart($("sw"), $("sw-tip"), [], {empty: "no sweep yet (runs between channel sessions)"}); return; }
   const fr = (i) => (SW.f0_hz + i * SW.df_hz) / 1e6;
@@ -316,13 +356,30 @@ function drawSW() {
   legend($("sw-legend"), series);
   $("sw-sub").textContent = `${new Date(SW.ts * 1000).toLocaleString()} · gain ${SW.gain_db} dB · rtl_power relative dB · shaded: known services`;
 }
+// ---------- node names (name-hints.txt) ----------
+let NAMES = [];
+const esc = (t) => String(t).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+// A file entry matches a shown key when one is a prefix of the other ("*" marks where a hint
+// stops being certain). Ambiguous matches (different names) show no name.
+function nameFor(label) {
+  if (!label) return null;
+  const core = label.replace(/\*$/, "");
+  if (core.length < 2) return null;
+  const hits = new Set(NAMES.filter(([k]) => { const kc = k.replace(/\*$/, ""); return kc.length >= 2 && (kc.startsWith(core) || core.startsWith(kc)); }).map(([, n]) => n));
+  return hits.size === 1 ? [...hits][0] : null;
+}
+function keyCell(label) {
+  const n = nameFor(label);
+  return n ? `${esc(n)} <span class="hex muted">${esc(label)}</span>` : `<span class="hex">${esc(label)}</span>`;
+}
+
 // ---------- tables ----------
 function pkRow(p) {
   let u = ""; if (p.umsh) { try { const j = typeof p.umsh === "string" ? JSON.parse(p.umsh) : p.umsh;
     u = Object.entries(j).filter(([k]) => k.startsWith("umsh.")).slice(0, 4).map(([k, v]) => `${k.slice(5)}=${v}`).join(" "); } catch (e) {} }
   const flags = [p.matched ? "" : "weak", (p.clipped || 0) > 1e-3 ? "clipped" : ""].filter(Boolean).join(", ");
   const a = p.crc_ok ? p.addr : null, ttl = a ? ` title="${a.type}"` : "";
-  const ad = (v) => v ? (v.startsWith("enc") ? `<span class="muted">${v}</span>` : `<span class="hex">${v}</span>`) : `<span class="muted">${a && a.type === "UACK" ? "ack" : "—"}</span>`;
+  const ad = (v) => v ? (v.startsWith("enc") || v === "all" || v.startsWith("ch ") ? `<span class="muted">${v}</span>` : keyCell(v)) : `<span class="muted">${a && a.type === "UACK" ? "ack" : "—"}</span>`;
   return `<tr><td>${fmtT(p.ts)}</td><td${ttl}>${ad(a && a.src)}</td><td${ttl}>${ad(a && a.dst)}</td><td class="num">${p.pay_len}</td><td class="${p.crc_ok ? "ok" : "bad"}">${p.crc_ok ? "✓ ok" : "✗ bad"}</td>
     <td class="num">${f1(p.rssi_dbfs)}</td><td class="num">${f1(p.rssi_dbm)}</td><td class="num">${f1(p.snr_db)}</td>
     <td class="num">${p.cfo_hz == null ? "—" : Math.round(p.cfo_hz)}</td><td class="num">${p.airtime_ms == null ? "—" : Math.round(p.airtime_ms)}</td>
@@ -363,9 +420,54 @@ function sortedNodes(nodes) {  // empty values (no SNR, never created) always si
     return (x - y) * dir || (b.tx - a.tx) || a.label.localeCompare(b.label);
   });
 }
-function ndButtons() { document.querySelectorAll("[data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === ND.hours)); }
-document.querySelectorAll("[data-h]").forEach(b => b.onclick = () => {
+function ndButtons() { document.querySelectorAll("#nd-win [data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === ND.hours)); }
+document.querySelectorAll("#nd-win [data-h]").forEach(b => b.onclick = () => {
   ND.hours = +b.dataset.h; try { localStorage.setItem("ndHours", ND.hours); } catch (e) {} ndButtons(); loadNodes(); });
+// ---------- emissions by frequency x bandwidth ----------
+// Generic click-to-sort for a table whose <th data-k> name row fields; empty values sink.
+function makeSortable(table, st, storeKey, render) {
+  try { const v = JSON.parse(localStorage.getItem(storeKey)); if (v && table.querySelector(`th[data-k="${v.k}"]`) && (v.dir === 1 || v.dir === -1)) st.sort = v; } catch (e) {}
+  table.querySelectorAll("th[data-k]").forEach(th => {
+    th.classList.add("sortable");
+    th.innerHTML = `<button type="button">${th.classList.contains("num") ? '<span class="arrow"></span>' : ""}${th.textContent}${th.classList.contains("num") ? "" : '<span class="arrow"></span>'}</button>`;
+    th.querySelector("button").onclick = () => {
+      st.sort = st.sort.k === th.dataset.k ? {k: th.dataset.k, dir: -st.sort.dir} : {k: th.dataset.k, dir: th.dataset.k === "f_lo_hz" ? 1 : -1};
+      try { localStorage.setItem(storeKey, JSON.stringify(st.sort)); } catch (e) {}
+      render();
+    };
+  });
+  return {
+    headers() { table.querySelectorAll("th[data-k]").forEach(th => { const on = th.dataset.k === st.sort.k;
+      th.setAttribute("aria-sort", on ? (st.sort.dir < 0 ? "descending" : "ascending") : "none");
+      th.querySelector(".arrow").textContent = on ? (st.sort.dir < 0 ? "▼" : "▲") : ""; }); },
+    sorted(rows, tie) { const {k, dir} = st.sort; return [...rows].sort((a, b) => { const x = a[k], y = b[k];
+      if (x == null || y == null) return (x == null) - (y == null); return ((x > y) - (x < y)) * dir || tie(a, b); }); },
+  };
+}
+const EB = {hours: 24, data: null, sort: {k: "count", dir: -1}};
+try { const h = localStorage.getItem("ebHours"); if (h != null && ["0", "0.25", "1", "24"].includes(h)) EB.hours = +h; } catch (e) {}
+const EBS = makeSortable($("eb"), EB, "ebSort", () => renderBuckets());
+function ebButtons() { document.querySelectorAll("#eb-win [data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === EB.hours)); }
+document.querySelectorAll("#eb-win [data-h]").forEach(b => b.onclick = () => {
+  EB.hours = +b.dataset.h; try { localStorage.setItem("ebHours", EB.hours); } catch (e) {} ebButtons(); loadBuckets(); });
+async function loadBuckets() {
+  try { EB.data = await j(`/api/emissions/buckets?hours=${EB.hours}`); renderBuckets(); } catch (e) { console.error(e); }
+}
+function renderBuckets() {
+  const d = EB.data; if (!d) return; EBS.headers();
+  const win = !EB.hours ? "All time" : EB.hours < 1 ? `Last ${Math.round(EB.hours * 60)} min` : `Last ${EB.hours} h`;
+  const obs = d.observed_s >= 3600 ? `${(d.observed_s / 3600).toFixed(1)} h` : `${Math.round(d.observed_s / 60)} min`;
+  $("eb-sum").textContent = `${win}: ${d.total} emissions in ${d.buckets.length} buckets over ${obs} of channel capture.`;
+  const f2 = (v, n = 1) => v == null ? "—" : v.toFixed(n), mhz = (hz) => (hz / 1e6).toFixed(3);
+  const when = (t) => new Date(t * 1000).toDateString() === new Date().toDateString() ? fmtT(t) : new Date(t * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+  document.querySelector("#eb tbody").innerHTML = EBS.sorted(d.buckets, (a, b) => b.count - a.count || a.f_lo_hz - b.f_lo_hz).slice(0, 500).map(b => `<tr>
+    <td class="num">${mhz(b.f_lo_hz)}–${Math.floor(b.f_lo_hz / 1e6) === Math.floor(b.f_hi_hz / 1e6) ? mhz(b.f_hi_hz).slice(-3) : mhz(b.f_hi_hz)}</td><td class="num">${b.bw_label}</td><td class="num">${b.count}</td>
+    <td class="num">${f2(b.per_hour, 0)}</td><td class="num">${f2(b.duty_pct, 3)}</td><td class="num">${f2(b.dur_ms, 0)}</td>
+    <td class="num">${f2(b.bw_khz)}</td><td class="num">${f2(b.peak_dbfs)}</td><td class="num">${f2(b.peak_max_dbfs)}</td>
+    <td class="num">${f2(b.above_db)}</td><td>${b.in_channel ? "yes" : "no"}</td><td>${when(b.last)}</td></tr>`).join("")
+    || `<tr><td colspan="12" class="muted">no emissions in this window</td></tr>`;
+}
+
 async function loadNodes() {
   try { ND.data = await j(`/api/nodes?hours=${ND.hours}`); renderNodes(); } catch (e) { console.error(e); }
 }
@@ -377,7 +479,7 @@ function renderNodes() {
   $("nd-sum").textContent = `${!ND.hours ? "All time" : ND.hours < 1 ? `Last ${Math.round(ND.hours * 60)} min` : `Last ${ND.hours} h`}: ${t.src_keys} unique SRC keys, ${t.dst_keys} unique DST keys. ` +
     `${t.decoded} packets decoded: ${t.good} good${pct(t.good)}, ${t.weak} weak${pct(t.weak)}, ${t.clipped} clipped${pct(t.clipped)}, ` +
     `${t.crc_bad} bad CRC${pct(t.crc_bad)}. Transmitting radio identified for ${t.attributed}; ${t.unattributed} CRC-ok frames were relayed by an unnamed hop or carry no sender address.`;
-  document.querySelector("#nd tbody").innerHTML = sortedNodes(d.nodes).map(n => `<tr><td class="hex">${n.label}${n.is_repeater_hint ? ' <span class="muted">(repeater)</span>' : ""}</td>
+  document.querySelector("#nd tbody").innerHTML = sortedNodes(d.nodes).map(n => `<tr><td>${keyCell(n.label)}${n.is_repeater_hint ? ' <span class="muted">(repeater)</span>' : ""}</td>
     <td class="num">${n0(n.created)}</td><td class="num">${n0(n.received)}</td><td class="num">${n0(n.tx)}</td><td class="num">${n0(n.repeated)}</td><td class="num">${n0(n.good)}</td>
     <td class="num">${n0(n.weak)}</td><td class="num">${n0(n.clipped)}</td><td class="num">${f1(n.snr_median)}</td>
     <td>${n.last == null ? '<span class="muted">—</span>' : new Date(n.last * 1000).toDateString() === new Date().toDateString() ? fmtT(n.last) : new Date(n.last * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">no addressed packets in this window</td></tr>`;
@@ -410,12 +512,13 @@ async function j(u) { const r = await fetch(u); return r.json(); }
 async function poll() {
   try {
     STATUS = await j("/api/status");
+    try { NAMES = await j("/api/names"); } catch (e) {}
     const s = await j("/api/seconds?minutes=30"); BANDS.forEach(([k]) => FL[k] = s[k] || []);
     PK.splice(0, PK.length, ...(await j("/api/packets?limit=200")));
     EM.splice(0, EM.length, ...(await j("/api/emissions?limit=200")));
     SW = await j("/api/sweep/latest");
-    loadNodes();
-    drawFL(); drawSW(); renderTables(); tiles();
+    loadNodes(); loadBuckets();
+    drawFL(); drawSW(); renderTables(); tiles(); swButton();
   } catch (e) { console.error(e); }
 }
 function connect() {
@@ -429,7 +532,7 @@ function connect() {
     else if (m.kind === "dissected") { const p = PK.find(x => x.id === d.id); if (p) { p.umsh = d.umsh; renderTables(); } }
     else if (m.kind === "emission") { EM.unshift({ts: d.ts, ts_end: d.ts + d.dur, f_center_hz: d.f, bw_hz: d.bw, peak_dbfs: d.peak, above_floor_db: d.above, cls: d.cls, in_channel: d.in_channel}); if (EM.length > 500) EM.pop(); }
     else if (m.kind === "second") { BANDS.forEach(([k]) => { const b = d.bands[k]; if (b) FL[k].push([d.ts, b.floor, b.busy_other, b.busy_umsh]); }); }
-    else if (m.kind === "mode") $("mode").textContent = `mode: ${d.mode} until ${fmtT(d.until)}`;
+    else if (m.kind === "mode") { $("mode").textContent = `mode: ${d.mode}${d.manual ? " (manual)" : ""} until ${fmtT(d.until)}`; if (STATUS) STATUS.mode = d; SWN.pending = false; swButton(); }
     else if (m.kind === "sweep") poll();
   };
 }
@@ -437,7 +540,7 @@ setInterval(() => { if (WF.rows.length) drawWF(); }, 200);
 setInterval(() => { drawFL(); tiles(); }, 2000);
 setInterval(poll, 15000);
 window.addEventListener("resize", () => { drawWF(); drawFL(); drawSW(); });
-ndButtons();
+ndButtons(); ebButtons();
 poll().then(() => { setView(WF.view); connect(); });
 </script>
 </body>

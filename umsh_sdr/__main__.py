@@ -148,7 +148,6 @@ def cmd_dashboard(a, settings):
 
 def cmd_run(a, settings):
     from .dashboard.app import Bus, serve_in_thread
-    from .sweep import survey
     db = DB(settings.db_path)
     bus = Bus()
     serve_in_thread(settings, bus)
@@ -161,19 +160,49 @@ def cmd_run(a, settings):
         sc.channel_minutes = a.channel_minutes
     if a.sweep_minutes is not None:
         sc.sweep_minutes = a.sweep_minutes
+    run_loop(settings, db, bus, stop)
+    print("stopped")
+
+
+def run_loop(settings, db, bus, stop: threading.Event):
+    """Channel capture, then a wideband sweep, repeated. A dashboard "Sweep now" ends the
+    current capture early, runs one sweep, then starts a fresh capture period."""
+    from .sweep import survey
+    sc = settings.schedule
+    sweep_s = (sc.sweep_minutes if sc.sweep_minutes > 0 else 5.0) * 60
+    sweep_req = threading.Event()  # "Sweep now" from the dashboard
+
+    class _StopOrSweep:  # ends the channel session early on shutdown or a sweep request
+        def is_set(self):
+            return stop.is_set() or sweep_req.is_set()
+
+    def request_sweep():
+        if bus.mode.get("mode") == "sweep":
+            return {"ok": False, "reason": "a sweep is already running"}
+        if sweep_req.is_set():
+            return {"ok": False, "reason": "a sweep is already starting"}
+        sweep_req.set()
+        return {"ok": True, "seconds": sweep_s}
+
+    bus.request_sweep, bus.sweep_seconds = request_sweep, sweep_s
     while not stop.is_set():
         bus.publish("mode", {"mode": "channel", "until": time.time() + sc.channel_minutes * 60})
-        channel_session(settings, db, sc.channel_minutes * 60, publish=bus.publish, stop_event=stop)
-        if stop.is_set() or sc.sweep_minutes <= 0:
+        channel_session(settings, db, sc.channel_minutes * 60, publish=bus.publish, stop_event=_StopOrSweep())
+        if stop.is_set():
             break
-        bus.publish("mode", {"mode": "sweep", "until": time.time() + sc.sweep_minutes * 60})
+        manual = sweep_req.is_set()
+        if not manual and sc.sweep_minutes <= 0:
+            break
+        if manual:
+            db.event(time.time(), "sweep_manual", {"seconds": sweep_s})
+        bus.publish("mode", {"mode": "sweep", "manual": manual, "until": time.time() + sweep_s})
+        sweep_req.clear()
         try:
-            res = survey(db, settings)
+            res = survey(db, settings, duration_s=sweep_s)
             if res:
                 bus.publish("sweep", {"id": res[0]["id"]})
         except Exception as e:
             db.event(time.time(), "sweep_error", repr(e))
-    print("stopped")
 
 
 def main(argv=None):

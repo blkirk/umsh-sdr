@@ -44,6 +44,9 @@ Open http://127.0.0.1:8917/ for:
 - per-node tallies
 - other emissions
 
+**Node names:** put `<key or hint><TAB><name>` lines in `name-hints.txt`, copying `name-hints.example.txt` as a template.
+The dashboard then shows names alongside the key hints. Edits appear within 15 s, with no restart needed.
+
 `umsh-sdr report --hours 24` writes a self-contained HTML report to `data/reports/`.
 [`docs/sample-report.html`](docs/sample-report.html) is an example from the first day.
 
