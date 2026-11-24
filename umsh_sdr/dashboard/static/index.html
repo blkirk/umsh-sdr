@@ -71,6 +71,12 @@ canvas { display: block; width: 100%; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+th.sortable { padding: 0; }
+th.sortable button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 5px 8px; cursor: pointer; text-align: inherit; }
+th.sortable button:hover { color: var(--text-primary); }
+th.sortable button:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--text-primary); }
+th .arrow { display: inline-block; width: 1em; text-align: center; }
 td.num, th.num { text-align: right; }
 td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .bad { color: var(--critical); } .ok { color: var(--good); }
@@ -130,13 +136,15 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
   </section>
 
   <section class="card span-12">
-    <div class="seg" role="group" aria-label="Node window"><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
+    <div class="seg" role="group" aria-label="Node window"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
     <h2>Nodes heard</h2>
     <p class="sub" id="nd-sum">—</p>
-    <p class="sub">One row per key (grouped by its first 3 bytes). Sent packets split into good (clean), weak (below the noise floor) and clipped (ADC saturated, so RSSI is a lower bound); good + weak + clipped = sent. Packets with a bad CRC can't be attributed to a node and only count in the totals. Median SNR is over packets the node sent.</p>
+    <p class="sub">One row per radio. <b>Created</b>/<b>Received</b>: packets naming it as SRC/DST, whoever transmitted them; <b>Last created</b> is its newest SRC packet. <b>On air</b>: packets this radio itself transmitted, which is what the SDR measured: its own unrelayed packets plus those it relayed (<b>Relayed</b>, named by the frame's Trace option). On air splits into good, weak (below the noise floor) and clipped (ADC saturated, RSSI a lower bound); median SNR is over On air. A repeater appears under its node key when its 2-byte repeater hint matches exactly one key seen, else as “XX* (repeater)”. Bad-CRC frames and frames relayed by an unnamed hop count only in the totals.</p>
     <div class="tablewrap"><table id="nd"><thead><tr>
-      <th>Key</th><th class="num">Sent (SRC)</th><th class="num">Received (DST)</th><th class="num">Good</th><th class="num">Weak</th>
-      <th class="num">Clipped</th><th class="num">Median SNR dB</th><th>Last seen</th>
+      <th>Key</th><th class="num" data-k="created">Created (SRC)</th><th class="num" data-k="received">Received (DST)</th>
+      <th class="num" data-k="tx">On air</th><th class="num" data-k="repeated">Relayed</th><th class="num" data-k="good">Good</th>
+      <th class="num" data-k="weak">Weak</th><th class="num" data-k="clipped">Clipped</th><th class="num" data-k="snr_median">Median SNR dB</th>
+      <th data-k="last">Last created</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 
@@ -327,8 +335,34 @@ function emRow(e) {
 }
 const PK = [], EM = [];
 // ---------- nodes heard ----------
-const ND = {hours: 24, data: null, pending: null};
-try { const h = localStorage.getItem("ndHours"); if (h != null && ["0", "1", "24"].includes(h)) ND.hours = +h; } catch (e) {}
+const ND = {hours: 24, data: null, pending: null, sort: {k: "last", dir: -1}};
+try { const h = localStorage.getItem("ndHours"); if (h != null && ["0", "0.25", "1", "24"].includes(h)) ND.hours = +h; } catch (e) {}
+try { const v = JSON.parse(localStorage.getItem("ndSort")); if (v && document.querySelector(`#nd th[data-k="${v.k}"]`) && (v.dir === 1 || v.dir === -1)) ND.sort = v; } catch (e) {}
+// Sortable headers: click toggles direction; a new column starts descending (largest / newest first).
+document.querySelectorAll("#nd th[data-k]").forEach(th => {
+  th.classList.add("sortable");
+  th.innerHTML = `<button type="button">${th.dataset.k !== "last" ? '<span class="arrow"></span>' : ""}${th.textContent}${th.dataset.k === "last" ? '<span class="arrow"></span>' : ""}</button>`;
+  th.querySelector("button").onclick = () => {
+    ND.sort = ND.sort.k === th.dataset.k ? {k: th.dataset.k, dir: -ND.sort.dir} : {k: th.dataset.k, dir: -1};
+    try { localStorage.setItem("ndSort", JSON.stringify(ND.sort)); } catch (e) {}
+    renderNodes();
+  };
+});
+function sortHeaders() {
+  document.querySelectorAll("#nd th[data-k]").forEach(th => {
+    const on = th.dataset.k === ND.sort.k;
+    th.setAttribute("aria-sort", on ? (ND.sort.dir < 0 ? "descending" : "ascending") : "none");
+    th.querySelector(".arrow").textContent = on ? (ND.sort.dir < 0 ? "▼" : "▲") : "";
+  });
+}
+function sortedNodes(nodes) {  // empty values (no SNR, never created) always sink to the bottom
+  const {k, dir} = ND.sort;
+  return [...nodes].sort((a, b) => {
+    const x = a[k], y = b[k];
+    if (x == null || y == null) return (x == null) - (y == null);
+    return (x - y) * dir || (b.tx - a.tx) || a.label.localeCompare(b.label);
+  });
+}
 function ndButtons() { document.querySelectorAll("[data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === ND.hours)); }
 document.querySelectorAll("[data-h]").forEach(b => b.onclick = () => {
   ND.hours = +b.dataset.h; try { localStorage.setItem("ndHours", ND.hours); } catch (e) {} ndButtons(); loadNodes(); });
@@ -339,13 +373,14 @@ function nodesSoon() { if (!ND.pending) ND.pending = setTimeout(() => { ND.pendi
 function renderNodes() {
   const d = ND.data; if (!d) return; const t = d.totals, n0 = (v) => v ? v : '<span class="muted">0</span>';
   const pct = (v) => t.decoded ? ` (${(100 * v / t.decoded).toFixed(0)}%)` : "";
-  $("nd-sum").textContent = `${ND.hours ? `Last ${ND.hours} h` : "All time"}: ${t.src_keys} unique SRC keys, ${t.dst_keys} unique DST keys. ` +
+  sortHeaders();
+  $("nd-sum").textContent = `${!ND.hours ? "All time" : ND.hours < 1 ? `Last ${Math.round(ND.hours * 60)} min` : `Last ${ND.hours} h`}: ${t.src_keys} unique SRC keys, ${t.dst_keys} unique DST keys. ` +
     `${t.decoded} packets decoded: ${t.good} good${pct(t.good)}, ${t.weak} weak${pct(t.weak)}, ${t.clipped} clipped${pct(t.clipped)}, ` +
-    `${t.crc_bad} bad CRC${pct(t.crc_bad)}` + (t.no_addr ? `; ${t.no_addr} CRC-ok with no node address (acks, encrypted).` : ".");
-  document.querySelector("#nd tbody").innerHTML = d.nodes.map(n => `<tr><td class="hex">${n.label}</td>
-    <td class="num">${n0(n.sent)}</td><td class="num">${n0(n.received)}</td><td class="num">${n0(n.good)}</td>
+    `${t.crc_bad} bad CRC${pct(t.crc_bad)}. Transmitting radio identified for ${t.attributed}; ${t.unattributed} CRC-ok frames were relayed by an unnamed hop or carry no sender address.`;
+  document.querySelector("#nd tbody").innerHTML = sortedNodes(d.nodes).map(n => `<tr><td class="hex">${n.label}${n.is_repeater_hint ? ' <span class="muted">(repeater)</span>' : ""}</td>
+    <td class="num">${n0(n.created)}</td><td class="num">${n0(n.received)}</td><td class="num">${n0(n.tx)}</td><td class="num">${n0(n.repeated)}</td><td class="num">${n0(n.good)}</td>
     <td class="num">${n0(n.weak)}</td><td class="num">${n0(n.clipped)}</td><td class="num">${f1(n.snr_median)}</td>
-    <td>${new Date(n.last * 1000).toDateString() === new Date().toDateString() ? fmtT(n.last) : new Date(n.last * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">no addressed packets in this window</td></tr>`;
+    <td>${n.last == null ? '<span class="muted">—</span>' : new Date(n.last * 1000).toDateString() === new Date().toDateString() ? fmtT(n.last) : new Date(n.last * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">no addressed packets in this window</td></tr>`;
 }
 function renderTables() {
   document.querySelector("#pk tbody").innerHTML = PK.slice(0, 200).map(pkRow).join("") || `<tr><td colspan="13" class="muted">no packets yet</td></tr>`;
