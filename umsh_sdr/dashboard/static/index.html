@@ -47,6 +47,8 @@ h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .btn:hover:not(:disabled) { border-color: var(--text-secondary); }
 .btn:disabled { color: var(--text-muted); cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+a.btn.cap { float: none; display: inline-block; text-decoration: none; padding: 1px 8px; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; float: right; }
 .seg button { font: inherit; font-size: 12px; padding: 3px 10px; border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--surface-0); color: var(--text-primary); font-weight: 600; }
@@ -137,7 +139,7 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
     <h2>Decoded packets</h2>
     <p class="sub">RSSI is in-channel power during the packet. SNR is the preamble estimate for weak frames and the power ratio for strong ones. Clipped means the ADC saturated, so RSSI is a lower bound. SRC/DST are the first 4 base58 characters of each key (* where a 3-byte hint can't fix the 4th); "all" is a broadcast, "ch" a multicast channel id, "enc" an address inside an encrypted body, and MAC acks carry none. Hover for the packet type.</p>
     <div class="tablewrap"><table id="pk"><thead><tr>
-      <th>Time</th><th>SRC</th><th>DST</th><th class="num">Len</th><th>CRC</th><th class="num">RSSI dBFS</th><th class="num">RSSI dBm</th>
+      <th>Time</th><th title="The radio that put this packet on the air when it was relayed (from the Trace option); SRC created it">Repeater</th><th>SRC</th><th>DST</th><th class="num">Len</th><th>CRC</th><th class="num">RSSI dBFS</th><th class="num">RSSI dBm</th>
       <th class="num">SNR dB</th><th class="num">CFO Hz</th><th class="num">Air ms</th><th>Flags</th><th>UMSH</th><th>Payload</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
@@ -165,12 +167,12 @@ td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); max
   </section>
 
   <section class="card span-12">
-    <div class="seg" role="group" aria-label="Emission tally window" id="eb-win"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
+    <button class="btn" id="eb-clear" style="margin-left:8px" title="Delete all recorded other emissions">Clear history</button><div class="seg" role="group" aria-label="Emission tally window" id="eb-win"><button data-h="0.25">15 m</button><button data-h="1">1 h</button><button data-h="24">24 h</button><button data-h="0">All</button></div>
     <h2>Other emissions by frequency and bandwidth</h2>
     <p class="sub" id="eb-sum">—</p>
-    <p class="sub">Emissions grouped into 100 kHz frequency slices and four bandwidth ranges (&lt; 25, 25–200, 200–600, ≥ 600 kHz). <b>Per hour</b> and <b>Duty</b> are per hour of channel capture in the window (nothing is recorded during sweeps). Duty is the share of capture time the bucket was occupied. Peak and above-floor are averages; Max peak is the strongest seen. Click a header to sort.</p>
+    <p class="sub">Emissions grouped into 100 kHz frequency slices and four bandwidth ranges (&lt; 25, 25–200, 200–600, ≥ 600 kHz). <b>Per hour</b> and <b>Duty</b> are per hour of channel capture in the window (nothing is recorded during sweeps). Duty is the share of capture time the bucket was occupied. Peak and above-floor are averages; Max peak is the strongest seen. Click a header to sort. <b>Capture</b> opens a proposal in a new tab to record that slice to ~/Downloads and analyse its modulation.</p>
     <div class="tablewrap"><table id="eb"><thead><tr>
-      <th class="num" data-k="f_lo_hz">Freq MHz</th><th class="num" data-k="bw_bucket">BW kHz</th><th class="num" data-k="count">Count</th>
+      <th><span class="vh">Capture</span></th><th class="num" data-k="f_lo_hz">Freq MHz</th><th class="num" data-k="bw_bucket">BW kHz</th><th class="num" data-k="count">Count</th>
       <th class="num" data-k="per_hour">Per hour</th><th class="num" data-k="duty_pct">Duty %</th><th class="num" data-k="dur_ms">Avg dur ms</th>
       <th class="num" data-k="bw_khz">Avg BW kHz</th><th class="num" data-k="peak_dbfs">Avg peak dBFS</th><th class="num" data-k="peak_max_dbfs">Max peak dBFS</th>
       <th class="num" data-k="above_db">Above floor dB</th><th data-k="in_channel">In channel</th><th data-k="last">Last seen</th>
@@ -332,6 +334,7 @@ function swButton() {
   const b = $("sw-now"), st = STATUS || {}, mode = st.mode || {};
   const mins = st.sweep_seconds ? Math.round(st.sweep_seconds / 60) : 5;
   if (!st.can_sweep) { b.disabled = true; b.textContent = "Sweep now"; b.title = "Only available while `umsh-sdr run` is serving this page"; return; }
+  if (mode.mode === "capture") { b.disabled = true; b.textContent = `Capturing… until ${fmtT(mode.until)}`; b.title = "An emission capture is recording; packet capture resumes after it"; return; }
   if (mode.mode === "sweep") { b.disabled = true; b.textContent = `Sweeping… until ${fmtT(mode.until)}`; b.title = "Packet capture resumes when the sweep ends"; return; }
   if (SWN.pending) { b.disabled = true; b.textContent = "Starting sweep…"; b.title = ""; return; }
   b.disabled = false; b.textContent = "Sweep now"; b.title = `Pause packet capture and sweep 900–935 MHz for about ${mins} min`;
@@ -373,14 +376,27 @@ function keyCell(label) {
   return n ? `${esc(n)} <span class="hex muted">${esc(label)}</span>` : `<span class="hex">${esc(label)}</span>`;
 }
 
-// ---------- tables ----------
+// Repeater column: who transmitted a relayed packet. A Trace entry names the last hop by the first 2 bytes
+// of its key; when exactly one node heard has a key starting with them, show that node (and its name).
+function repCell(a) {
+  if (!a || !a.tx) return '<span class="muted">—</span>';
+  const tx = a.tx;
+  if (tx.kind === "sender") return '<span class="muted" title="SRC transmitted it directly">direct</span>';
+  if (tx.kind === "forwarded") return '<span class="muted" title="Relayed, but the frame does not name the repeater">relayed (unnamed)</span>';
+  if (tx.kind !== "repeater") return '<span class="muted" title="Source-routed: cannot tell whether SRC or a repeater sent it">?</span>';
+  const nodes = (ND.data && ND.data.nodes) || [];
+  const hit = nodes.filter(n => n.id.length === 6 && n.id.startsWith(tx.rh));
+  const label = hit.length === 1 ? hit[0].label : a.rep || tx.rh;
+  const same = a.src_id && a.src_id.startsWith(tx.rh);
+  return keyCell(label) + (same ? ' <span class="muted" title="The repeater hint matches the SRC key">(= SRC?)</span>' : "");
+}
 function pkRow(p) {
   let u = ""; if (p.umsh) { try { const j = typeof p.umsh === "string" ? JSON.parse(p.umsh) : p.umsh;
     u = Object.entries(j).filter(([k]) => k.startsWith("umsh.")).slice(0, 4).map(([k, v]) => `${k.slice(5)}=${v}`).join(" "); } catch (e) {} }
   const flags = [p.matched ? "" : "weak", (p.clipped || 0) > 1e-3 ? "clipped" : ""].filter(Boolean).join(", ");
   const a = p.crc_ok ? p.addr : null, ttl = a ? ` title="${a.type}"` : "";
   const ad = (v) => v ? (v.startsWith("enc") || v === "all" || v.startsWith("ch ") ? `<span class="muted">${v}</span>` : keyCell(v)) : `<span class="muted">${a && a.type === "UACK" ? "ack" : "—"}</span>`;
-  return `<tr><td>${fmtT(p.ts)}</td><td${ttl}>${ad(a && a.src)}</td><td${ttl}>${ad(a && a.dst)}</td><td class="num">${p.pay_len}</td><td class="${p.crc_ok ? "ok" : "bad"}">${p.crc_ok ? "✓ ok" : "✗ bad"}</td>
+  return `<tr><td>${fmtT(p.ts)}</td><td>${repCell(a)}</td><td${ttl}>${ad(a && a.src)}</td><td${ttl}>${ad(a && a.dst)}</td><td class="num">${p.pay_len}</td><td class="${p.crc_ok ? "ok" : "bad"}">${p.crc_ok ? "✓ ok" : "✗ bad"}</td>
     <td class="num">${f1(p.rssi_dbfs)}</td><td class="num">${f1(p.rssi_dbm)}</td><td class="num">${f1(p.snr_db)}</td>
     <td class="num">${p.cfo_hz == null ? "—" : Math.round(p.cfo_hz)}</td><td class="num">${p.airtime_ms == null ? "—" : Math.round(p.airtime_ms)}</td>
     <td class="muted">${flags}</td><td>${u || '<span class="muted">—</span>'}</td><td class="hex">${(p.payload_hex || p.payload || "").slice(0, 64)}</td></tr>`;
@@ -450,6 +466,17 @@ const EBS = makeSortable($("eb"), EB, "ebSort", () => renderBuckets());
 function ebButtons() { document.querySelectorAll("#eb-win [data-h]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === EB.hours)); }
 document.querySelectorAll("#eb-win [data-h]").forEach(b => b.onclick = () => {
   EB.hours = +b.dataset.h; try { localStorage.setItem("ebHours", EB.hours); } catch (e) {} ebButtons(); loadBuckets(); });
+$("eb-clear").onclick = async () => {
+  const n = EB.data ? EB.data.total : null;
+  if (!confirm(`Delete the whole "Other emissions" history${n != null && EB.hours === 0 ? ` (${n} emissions)` : ""}?\n\nThis empties both emission tables and can't be undone. New emissions keep being recorded.`)) return;
+  const b = $("eb-clear"); b.disabled = true;
+  try {
+    const d = await (await fetch("/api/emissions/clear", {method: "POST"})).json();
+    EM.length = 0; renderTables(); await loadBuckets();
+    b.textContent = `Cleared ${d.deleted}`; setTimeout(() => { b.textContent = "Clear history"; }, 4000);
+  } catch (e) { alert(`Not cleared: ${e}`); }
+  b.disabled = false;
+};
 async function loadBuckets() {
   try { EB.data = await j(`/api/emissions/buckets?hours=${EB.hours}`); renderBuckets(); } catch (e) { console.error(e); }
 }
@@ -461,15 +488,16 @@ function renderBuckets() {
   const f2 = (v, n = 1) => v == null ? "—" : v.toFixed(n), mhz = (hz) => (hz / 1e6).toFixed(3);
   const when = (t) => new Date(t * 1000).toDateString() === new Date().toDateString() ? fmtT(t) : new Date(t * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
   document.querySelector("#eb tbody").innerHTML = EBS.sorted(d.buckets, (a, b) => b.count - a.count || a.f_lo_hz - b.f_lo_hz).slice(0, 500).map(b => `<tr>
+    <td><a class="btn cap" href="/capture?f_lo=${b.f_lo_hz}&f_hi=${b.f_hi_hz}&bb=${b.bw_bucket}" target="_blank" rel="noopener" title="Propose recording ${mhz(b.f_lo_hz)}–${mhz(b.f_hi_hz)} MHz, ${b.bw_label} kHz">Capture</a></td>
     <td class="num">${mhz(b.f_lo_hz)}–${Math.floor(b.f_lo_hz / 1e6) === Math.floor(b.f_hi_hz / 1e6) ? mhz(b.f_hi_hz).slice(-3) : mhz(b.f_hi_hz)}</td><td class="num">${b.bw_label}</td><td class="num">${b.count}</td>
     <td class="num">${f2(b.per_hour, 0)}</td><td class="num">${f2(b.duty_pct, 3)}</td><td class="num">${f2(b.dur_ms, 0)}</td>
     <td class="num">${f2(b.bw_khz)}</td><td class="num">${f2(b.peak_dbfs)}</td><td class="num">${f2(b.peak_max_dbfs)}</td>
     <td class="num">${f2(b.above_db)}</td><td>${b.in_channel ? "yes" : "no"}</td><td>${when(b.last)}</td></tr>`).join("")
-    || `<tr><td colspan="12" class="muted">no emissions in this window</td></tr>`;
+    || `<tr><td colspan="13" class="muted">no emissions in this window</td></tr>`;
 }
 
 async function loadNodes() {
-  try { ND.data = await j(`/api/nodes?hours=${ND.hours}`); renderNodes(); } catch (e) { console.error(e); }
+  try { ND.data = await j(`/api/nodes?hours=${ND.hours}`); renderNodes(); renderTables(); } catch (e) { console.error(e); }
 }
 function nodesSoon() { if (!ND.pending) ND.pending = setTimeout(() => { ND.pending = null; loadNodes(); }, 3000); }
 function renderNodes() {
@@ -485,7 +513,7 @@ function renderNodes() {
     <td>${n.last == null ? '<span class="muted">—</span>' : new Date(n.last * 1000).toDateString() === new Date().toDateString() ? fmtT(n.last) : new Date(n.last * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})}</td></tr>`).join("") || `<tr><td colspan="10" class="muted">no addressed packets in this window</td></tr>`;
 }
 function renderTables() {
-  document.querySelector("#pk tbody").innerHTML = PK.slice(0, 200).map(pkRow).join("") || `<tr><td colspan="13" class="muted">no packets yet</td></tr>`;
+  document.querySelector("#pk tbody").innerHTML = PK.slice(0, 200).map(pkRow).join("") || `<tr><td colspan="14" class="muted">no packets yet</td></tr>`;
   document.querySelector("#em tbody").innerHTML = EM.slice(0, 200).map(emRow).join("") || `<tr><td colspan="8" class="muted">none yet</td></tr>`;
 }
 // ---------- tiles ----------

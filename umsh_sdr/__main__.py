@@ -9,6 +9,8 @@
   calibrate  ppm | gain | level | selfnoise
   report     build the HTML report for a time range
   dashboard  dashboard over the database only (no radio)
+  capture    record + analyse one emission slice into ~/Downloads/umsh-sdr-captures
+  analyse    re-run the analysis of a capture folder
 """
 from __future__ import annotations
 
@@ -151,7 +153,6 @@ def cmd_run(a, settings):
     db = DB(settings.db_path)
     bus = Bus()
     serve_in_thread(settings, bus)
-    print(f"dashboard: http://{settings.dashboard_host}:{settings.dashboard_port}/", flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -166,43 +167,104 @@ def cmd_run(a, settings):
 
 def run_loop(settings, db, bus, stop: threading.Event):
     """Channel capture, then a wideband sweep, repeated. A dashboard "Sweep now" ends the
-    current capture early, runs one sweep, then starts a fresh capture period."""
+    current capture early, runs one sweep, then starts a fresh capture period. A dashboard
+    "Capture" ends it early, records one emission slice with rtl_sdr, starts the analysis in a
+    background process, and goes straight back to channel capture."""
+    from . import emission_capture as EC
     from .sweep import survey
     sc = settings.schedule
     sweep_s = (sc.sweep_minutes if sc.sweep_minutes > 0 else 5.0) * 60
-    sweep_req = threading.Event()  # "Sweep now" from the dashboard
+    job = {"next": None}  # ("sweep", None) or ("capture", folder), set by the dashboard
+    lock = threading.Lock()
 
-    class _StopOrSweep:  # ends the channel session early on shutdown or a sweep request
+    class _StopOrJob:  # ends the channel session early on shutdown or a dashboard request
         def is_set(self):
-            return stop.is_set() or sweep_req.is_set()
+            return stop.is_set() or job["next"] is not None
+
+    def _busy():
+        m = bus.mode.get("mode")
+        if m == "sweep":
+            return "a sweep is already running"
+        if m == "capture":
+            return "a capture is already recording"
+        if job["next"]:
+            return f"a {job['next'][0]} is already starting"
+        return None
 
     def request_sweep():
-        if bus.mode.get("mode") == "sweep":
-            return {"ok": False, "reason": "a sweep is already running"}
-        if sweep_req.is_set():
-            return {"ok": False, "reason": "a sweep is already starting"}
-        sweep_req.set()
+        with lock:
+            if (why := _busy()):
+                return {"ok": False, "reason": why}
+            job["next"] = ("sweep", None)
         return {"ok": True, "seconds": sweep_s}
 
-    bus.request_sweep, bus.sweep_seconds = request_sweep, sweep_s
-    while not stop.is_set():
-        bus.publish("mode", {"mode": "channel", "until": time.time() + sc.channel_minutes * 60})
-        channel_session(settings, db, sc.channel_minutes * 60, publish=bus.publish, stop_event=_StopOrSweep())
-        if stop.is_set():
-            break
-        manual = sweep_req.is_set()
-        if not manual and sc.sweep_minutes <= 0:
-            break
-        if manual:
-            db.event(time.time(), "sweep_manual", {"seconds": sweep_s})
-        bus.publish("mode", {"mode": "sweep", "manual": manual, "until": time.time() + sweep_s})
-        sweep_req.clear()
-        try:
-            res = survey(db, settings, duration_s=sweep_s)
-            if res:
-                bus.publish("sweep", {"id": res[0]["id"]})
-        except Exception as e:
-            db.event(time.time(), "sweep_error", repr(e))
+    def request_capture(plan, bucket=None):
+        with lock:
+            if (why := _busy()):
+                return {"ok": False, "reason": why}
+            d, rec = EC.new_capture(settings, plan, bucket)
+            job["next"] = ("capture", d)
+        return {"ok": True, "id": rec["id"], "seconds": plan["seconds"]}
+
+    bus.request_sweep, bus.sweep_seconds, bus.request_capture = request_sweep, sweep_s, request_capture
+    try:
+        while not stop.is_set():
+            bus.publish("mode", {"mode": "channel", "until": time.time() + sc.channel_minutes * 60})
+            channel_session(settings, db, sc.channel_minutes * 60, publish=bus.publish, stop_event=_StopOrJob())
+            if stop.is_set():
+                break
+            nxt = job["next"]
+            if nxt and nxt[0] == "capture":
+                d = nxt[1]
+                plan = EC.load(d)["plan"]
+                db.event(time.time(), "capture", {"id": d.name, "f_lo_hz": plan["f_lo_hz"], "seconds": plan["seconds"]})
+                bus.publish("mode", {"mode": "capture", "id": d.name, "until": time.time() + plan["seconds"] + 3})
+                with lock:
+                    job["next"] = None
+                try:
+                    EC.record(d, settings.rtl_sdr)
+                    EC.start_analysis(d)
+                except Exception as e:
+                    db.event(time.time(), "capture_error", repr(e))
+                continue
+            manual = nxt is not None
+            if not manual and sc.sweep_minutes <= 0:
+                break
+            if manual:
+                db.event(time.time(), "sweep_manual", {"seconds": sweep_s})
+            bus.publish("mode", {"mode": "sweep", "manual": manual, "until": time.time() + sweep_s})
+            with lock:
+                job["next"] = None
+            try:
+                res = survey(db, settings, duration_s=sweep_s)
+                if res:
+                    bus.publish("sweep", {"id": res[0]["id"]})
+            except Exception as e:
+                db.event(time.time(), "sweep_error", repr(e))
+    finally:
+        bus.request_sweep = bus.request_capture = None
+        nxt = job["next"]
+        if nxt and nxt[0] == "capture":
+            EC.update(nxt[1], status="cancelled", error="the monitor stopped before the capture started")
+
+
+def cmd_capture(a, settings):
+    """Record and analyse one slice directly (the radio must be free: no `run` daemon)."""
+    from . import emission_capture as EC
+    plan = EC.make_plan(settings, a.f_lo * 1e6, a.f_hi * 1e6, a.bw_bucket, seconds=a.seconds, gain_db=a.gain)
+    d, rec = EC.new_capture(settings, plan)
+    print(f"recording {plan['seconds']:.0f} s at {plan['lo_hz'] / 1e6:.6f} MHz into {d}", flush=True)
+    EC.record(d, settings.rtl_sdr)
+    print("analysing...", flush=True)
+    rec = EC.analyse(d)
+    print(json.dumps(rec["analysis"]["summary"], indent=1))
+    print(d)
+
+
+def cmd_analyse(a, settings):
+    from . import emission_capture as EC
+    rec = EC.analyse(Path(a.folder))
+    print(json.dumps(rec["analysis"]["summary"], indent=1))
 
 
 def main(argv=None):
@@ -228,6 +290,11 @@ def main(argv=None):
     s = sub.add_parser("report"); s.add_argument("--hours", type=float, default=24); s.add_argument("--out")
     s.set_defaults(fn=cmd_report)
     sub.add_parser("dashboard").set_defaults(fn=cmd_dashboard)
+    s = sub.add_parser("capture", help="record + analyse one emission slice (radio must be free)")
+    s.add_argument("--f-lo", type=float, required=True, help="MHz"); s.add_argument("--f-hi", type=float, required=True)
+    s.add_argument("--bw-bucket", type=int, default=0, help="0: <25 kHz, 1: 25-200, 2: 200-600, 3: >=600")
+    s.add_argument("--seconds", type=float, default=30); s.add_argument("--gain", type=float); s.set_defaults(fn=cmd_capture)
+    s = sub.add_parser("analyse", help="(re)analyse a capture folder"); s.add_argument("folder"); s.set_defaults(fn=cmd_analyse)
     a = p.parse_args(argv)
     a.fn(a, settings)
 

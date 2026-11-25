@@ -32,7 +32,7 @@ cp config.example.toml config.toml   # then set ping_target etc.
 source env.sh                  # system numpy/GNU Radio + local gr-lora_sdr + venv
 python -m pytest -q            # the dissector test is skipped without tshark
 umsh-sdr calibrate ppm --apply # crystal offset; needs a node that answers pings
-umsh-sdr run                   # daemon: 55 min channel / 5 min sweep, dashboard on :8917
+umsh-sdr run                   # daemon: 55 min channel / 5 min sweep; prints the dashboard URL
 ```
 
 Open http://127.0.0.1:8917/ for:
@@ -47,6 +47,21 @@ Open http://127.0.0.1:8917/ for:
 **Node names:** put `<key or hint><TAB><name>` lines in `name-hints.txt`, copying `name-hints.example.txt` as a template.
 The dashboard then shows names alongside the key hints. Edits appear within 15 s, with no restart needed.
 
+**Capture an emission:** each row of *Other emissions by frequency and bandwidth* has a **Capture** button.
+It opens a proposal in a new tab with the tuning, duration, gain, file size and how long UMSH decoding pauses
+(the duration plus about 6 s). Start it, and the daemon stops channel capture, records the slice with `rtl_sdr`,
+resumes decoding, and analyses the file in a background process. Each capture is a folder in
+`~/Downloads/umsh-sdr-captures/` (`capture_dir` in config.toml) holding:
+- the raw IQ as SigMF (cu8, 2.048 MS/s; opens in inspectrum)
+- a decimated slice (cs16)
+- spectrogram plots, a README and the analysis
+
+The analysis finds bursts and estimates bandwidth, duration and SNR. It then classifies the modulation (OOK/ASK,
+2/4-FSK, CW, LoRa-like chirps, BPSK/QPSK), estimates the symbol rate and FSK deviation, and slices bits. It also
+searches for preambles, Manchester coding and known sync words (Semtech/TI defaults, 802.15.4g/Wi-SUN, Itron ERT,
+Z-Wave). If `rtl_433` is installed it is run too. `umsh-sdr capture --f-lo 916.8 --f-hi 916.9` does the same
+without the daemon, and `umsh-sdr analyse <folder>` re-runs an analysis.
+
 `umsh-sdr report --hours 24` writes a self-contained HTML report to `data/reports/`.
 [`docs/sample-report.html`](docs/sample-report.html) is an example from the first day.
 
@@ -57,6 +72,7 @@ The dashboard then shows names alongside the key hints. Edits appear within 15 s
 | `record out.u8 --seconds N` / `replay out.u8 --gain G` | Raw IQ capture and offline reprocessing |
 | `sweep`, `overload` | One wideband survey; the gain-step intermod test |
 | `calibrate ppm\|gain\|level\|selfnoise [--apply]` | Calibration (uses `umshctl ping` on the test node) |
+| `capture --f-lo MHz --f-hi MHz [--bw-bucket 0-3 --seconds N]`, `analyse DIR` | Record + analyse one emission slice; re-analyse a capture |
 | `report --hours H`, `dashboard` | HTML report; dashboard over the database only |
 
 ## Calibration (config.toml)
@@ -91,6 +107,8 @@ Every dongle needs its own calibration. Below are the figures from the developme
     - SNR: preamble estimate for weak frames, power ratio for strong ones.
   - **Exclusions:** noise statistics leave out UMSH packets, clipped frames and a 4 s warm-up.
     Emissions that coincide with strong local packets are dropped as dongle artifacts.
+- `iq_analysis.py` / `emission_capture.py`: burst detection, modulation classification and bit-level decode
+  attempts for emission captures (heuristics: they say what a signal is consistent with).
 - `umsh_addr.py`:
   - Reads SRC and DST keys straight from the frame bytes, with no tshark needed.
   - Shows them in UMSH's base58 format, first 4 characters.

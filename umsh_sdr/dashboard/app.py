@@ -3,15 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import threading
 import time
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 
 from .. import config as C
+from .. import emission_capture as EC
 from ..db import DB, unf32
 from ..emission_buckets import buckets as emission_buckets
 from ..umsh_addr import parse as parse_addr, summarize
@@ -29,6 +31,7 @@ class Bus:
         self.mode: dict = {}
         self.request_sweep = None  # set by `umsh-sdr run`: () -> {"ok", "reason"|"seconds"}
         self.sweep_seconds: float | None = None
+        self.request_capture = None  # set by `umsh-sdr run`: (plan, bucket) -> {"ok", "id"|"reason"}
 
     def publish(self, kind: str, data: dict):
         if kind == "wf":  # halve the row: max of bin pairs keeps narrow signals visible
@@ -103,7 +106,7 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
                                 "self_floor_dbfs": cal.self_floor_dbfs},
                 "reference": {"thermal_dbm": C.THERMAL_DBM, "sx1262_floor_dbm": C.SX1262_FLOOR_DBM},
                 "mode": bus.mode if bus else None,
-                "can_sweep": bool(bus and bus.request_sweep), "sweep_seconds": bus.sweep_seconds if bus else None,
+                "can_sweep": bool(bus and bus.request_sweep), "can_capture": bool(bus and bus.request_capture), "sweep_seconds": bus.sweep_seconds if bus else None,
                 "lo_hz": C.LO_HZ, "sample_rate": C.SAMPLE_RATE, "channel": C.BANDS["channel"],
                 "events": _rows(last)}
 
@@ -161,6 +164,17 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
         t0 = 0 if hours <= 0 else time.time() - hours * 3600
         return emission_buckets(db(), t0, max(1.0, step_khz) * 1e3)
 
+    @app.post("/api/emissions/clear")
+    def emissions_clear():
+        """Delete the whole "other emissions" history. Rates afterwards count capture time from now."""
+        w = DB(settings.db_path)
+        try:
+            n = w.execute("DELETE FROM emissions").rowcount
+            w.event(time.time(), "emissions_cleared", {"deleted": n})
+        finally:
+            w.conn.close()
+        return {"ok": True, "deleted": n}
+
     @app.get("/api/emissions")
     def emissions(limit: int = 100):
         return _rows(db().query("SELECT * FROM emissions ORDER BY ts DESC LIMIT ?", (min(limit, 1000),)))
@@ -183,6 +197,69 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
         r = bus.request_sweep()
         return JSONResponse(r, status_code=202 if r["ok"] else 409)
 
+    # ---- emission capture: proposal page, request, status, files
+    @app.get("/capture")
+    def capture_page():
+        return FileResponse(STATIC / "capture.html")
+
+    def _bucket(f_lo: float, bb: int, hours: float = 24):
+        try:
+            d = emission_buckets(db(), time.time() - hours * 3600)
+        except Exception:  # no database yet: plan without the 24 h statistics
+            return None
+        return next((b for b in d["buckets"] if abs(b["f_lo_hz"] - f_lo) < 1 and b["bw_bucket"] == bb), None)
+
+    @app.get("/api/capture/plan")
+    def capture_plan(f_lo: float, f_hi: float, bb: int, seconds: float | None = None, gain: float | None = None):
+        bucket = _bucket(f_lo, bb)
+        try:
+            plan = EC.make_plan(settings, f_lo, f_hi, bb, seconds=seconds, gain_db=gain,
+                                per_hour=bucket["per_hour"] if bucket else None)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "reason": str(e)}, status_code=400)
+        can = bool(bus and bus.request_capture)
+        return {"ok": True, "plan": plan, "bucket": bucket, "can_capture": can, "mode": bus.mode if bus else None,
+                "reason": None if can else "the dashboard is not attached to the radio (run `umsh-sdr run`)",
+                "rtl_433": bool(shutil.which("rtl_433"))}
+
+    @app.post("/api/capture")
+    def capture_start(req: dict = Body(...)):
+        """Queue a capture: the channel session stops, rtl_sdr records, decoding resumes."""
+        if bus is None or bus.request_capture is None:
+            return JSONResponse({"ok": False, "reason": "dashboard is not attached to the radio (run `umsh-sdr run`)"},
+                                status_code=409)
+        try:
+            bucket = _bucket(float(req["f_lo"]), int(req["bb"]))
+            plan = EC.make_plan(settings, req["f_lo"], req["f_hi"], req["bb"], seconds=req.get("seconds"),
+                                gain_db=req.get("gain"), per_hour=bucket["per_hour"] if bucket else None)
+        except (KeyError, TypeError, ValueError) as e:
+            return JSONResponse({"ok": False, "reason": f"bad request: {e}"}, status_code=400)
+        r = bus.request_capture(plan, bucket)
+        return JSONResponse(r, status_code=202 if r["ok"] else 409)
+
+    @app.get("/api/captures")
+    def captures():
+        return EC.list_captures(settings)
+
+    @app.get("/api/capture/{cid}")
+    def capture_status(cid: str):
+        d = EC.capture_dir(settings, cid)
+        if d is None:
+            return JSONResponse({"ok": False, "reason": "no such capture"}, status_code=404)
+        rec = EC.load(d)
+        rec["folder"] = str(d)
+        return rec
+
+    @app.get("/api/capture/{cid}/file/{name}")
+    def capture_file(cid: str, name: str):
+        d = EC.capture_dir(settings, cid)
+        if d is None or name not in ("overview.png", "burst.png", "README.txt", "rtl_433.txt", "analysis.log"):
+            return JSONResponse({"ok": False, "reason": "no such file"}, status_code=404)
+        f = d / name
+        if not f.exists():
+            return JSONResponse({"ok": False, "reason": "no such file"}, status_code=404)
+        return FileResponse(f, headers={"Cache-Control": "no-store"})
+
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
@@ -204,16 +281,48 @@ def create_app(settings: C.Settings, bus: Bus | None) -> FastAPI:
     return app
 
 
-def serve(settings: C.Settings, live: bool = False, bus: Bus | None = None):
+def dashboard_url(settings: C.Settings) -> str:
+    host = settings.dashboard_host
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"  # listening on every interface: this machine's own address works
+    return f"http://{host}:{settings.dashboard_port}/"
+
+
+def _announce(server, settings: C.Settings, t: threading.Thread, timeout: float = 15.0):
+    """Tell the operator where to point a browser, once the server is really listening."""
+    t_end = time.time() + timeout
+    while not server.started and t.is_alive() and time.time() < t_end:
+        time.sleep(0.05)
+    if server.started:
+        extra = "" if settings.dashboard_host not in ("0.0.0.0", "::") else \
+            f" (listening on all interfaces, port {settings.dashboard_port})"
+        print(f"Dashboard ready: open a browser on {dashboard_url(settings)}{extra}", flush=True)
+    else:
+        print(f"Dashboard did NOT start on {settings.dashboard_host}:{settings.dashboard_port} "
+              "(port already in use? another `umsh-sdr run` or `dashboard`?)", flush=True)
+
+
+def _server(settings: C.Settings, bus: Bus | None):
     import uvicorn
-    uvicorn.run(create_app(settings, bus if live else None), host=settings.dashboard_host,
-                port=settings.dashboard_port, log_level="warning")
+    return uvicorn.Server(uvicorn.Config(create_app(settings, bus), host=settings.dashboard_host,
+                                         port=settings.dashboard_port, log_level="warning"))
+
+
+def serve(settings: C.Settings, live: bool = False, bus: Bus | None = None):
+    server = _server(settings, bus if live else None)
+    t = threading.Thread(target=server.run, name="dashboard")
+    t.start()
+    _announce(server, settings, t)
+    try:
+        t.join()
+    except KeyboardInterrupt:
+        server.should_exit = True
+        t.join()
 
 
 def serve_in_thread(settings: C.Settings, bus: Bus) -> threading.Thread:
-    import uvicorn
-    server = uvicorn.Server(uvicorn.Config(create_app(settings, bus), host=settings.dashboard_host,
-                                           port=settings.dashboard_port, log_level="warning"))
+    server = _server(settings, bus)
     t = threading.Thread(target=server.run, name="dashboard", daemon=True)
     t.start()
+    _announce(server, settings, t)
     return t

@@ -24,3 +24,24 @@ def test_buckets(tmp_path):
     assert wide["in_channel"] and abs(wide["duty_pct"] - 100 * 0.5 / 3700) < 1e-9
     assert len(r["buckets"]) == 3
     assert bw_bucket_label(3) == "≥ 600" and bw_bucket_label(2) == "200–600"
+
+
+def test_clear_endpoint_empties_emissions_and_resets_capture_time(tmp_path):
+    import time
+    from umsh_sdr import config as C
+    from umsh_sdr.db import DB
+    from umsh_sdr.dashboard import app as APP
+    from umsh_sdr.emission_buckets import buckets
+    s = C.Settings(data_dir=str(tmp_path))
+    db = DB(s.db_path)
+    now = time.time()
+    db.event(now - 3600, "channel_start")
+    for i in range(5):
+        db.insert("emissions", {"ts": now - 100 + i, "ts_end": now - 99.99 + i, "f_center_hz": 916.45e6, "bw_hz": 5e3,
+                                "peak_dbfs": -40, "above_floor_db": 12, "cls": "narrowband", "in_channel": 0, "umsh": 0})
+    assert buckets(db, 0)["total"] == 5
+    app = APP.create_app(s, None)
+    clear = next(r.endpoint for r in app.routes if getattr(r, "path", None) == "/api/emissions/clear")
+    assert clear() == {"ok": True, "deleted": 5}
+    d = buckets(db, 0)
+    assert d["total"] == 0 and d["observed_s"] < 5

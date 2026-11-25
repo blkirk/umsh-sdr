@@ -103,7 +103,7 @@ def transmitter(opts: dict[int, bytes], fhops: int | None) -> dict:
 
 
 def parse(p: bytes) -> dict | None:
-    """{"type", "src", "dst", "src_id", "dst_id"} or None if the frame isn't UMSH v3 / is too short."""
+    """{"type", "src", "dst", "src_id", "dst_id", "tx", "rep"} or None if the frame isn't UMSH v3 / is too short."""
     try:
         if not p or p[0] >> 6 != 3:
             return None
@@ -111,7 +111,7 @@ def parse(p: bytes) -> dict | None:
         fhops = p[1] if p[0] & 1 else None
         slen = 32 if full else 3
         r = {"type": TYPES[t], "src": None, "dst": None, "src_id": None, "dst_id": None,
-             "tx": {"kind": "unknown", "rh": None}}
+             "tx": {"kind": "unknown", "rh": None}, "rep": None}
         opts = None
         if t == 0:
             r.update(src=hint(p[off:off + slen]), dst="all", src_id=p[off:off + 3].hex())
@@ -142,6 +142,8 @@ def parse(p: bytes) -> dict | None:
                 r.update(src=ENC, dst=f"{ENC} (ch {ch})")
         if opts is not None:
             r["tx"] = transmitter(opts, fhops)
+        rh = r["tx"]["rh"]
+        r["rep"] = hint(bytes.fromhex(rh), 3) if rh else None  # last hop's repeater hint, base58
         return r
     except (IndexError, ValueError):
         return None

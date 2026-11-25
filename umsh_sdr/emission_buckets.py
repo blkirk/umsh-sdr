@@ -53,6 +53,9 @@ def _last_second(db, a: float, b: float) -> float:
 
 
 def buckets(db, t0: float, step_hz: float = 100e3) -> dict:
+    cleared = db.query("SELECT max(ts) m FROM events WHERE kind = 'emissions_cleared'")[0]["m"]
+    if cleared is not None:
+        t0 = max(t0, cleared)  # history before a clear is gone: don't count its capture time
     case = " ".join(f"WHEN bw_hz < {e} THEN {i}" for i, e in enumerate(BW_EDGES_HZ))
     rows = db.query(
         f"""SELECT CAST(f_center_hz / ? AS INTEGER) fb, CASE {case} ELSE {len(BW_EDGES_HZ)} END bb,

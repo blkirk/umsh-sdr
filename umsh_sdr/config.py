@@ -77,6 +77,8 @@ class Settings:
     node_port: str = "/dev/ttyACM0"
     name_hints: str = str(ROOT / "name-hints.txt")  # "<key or hint>\t<node name>" per line
     ping_target: str = ""  # base58 key of a node that answers pings; set in config.toml
+    capture_dir: str = str(Path.home() / "Downloads" / "umsh-sdr-captures")  # emission recordings
+    rtl_sdr: str = "rtl_sdr"
 
     @property
     def db_path(self) -> Path:

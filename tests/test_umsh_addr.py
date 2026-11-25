@@ -13,7 +13,7 @@ def test_unicast_ack_req():
     fcf = (3 << 6) | (3 << 3)  # v3, UNAR, hint SRC, no FHOPS
     r = parse(bytes([fcf]) + dst + src + bytes(5) + b"\xff" + bytes(8))
     assert r == {"type": "UNAR", "src": hint(src), "dst": hint(dst), "src_id": "445566", "dst_id": "112233",
-                 "tx": {"kind": "sender", "rh": None}}
+                 "tx": {"kind": "sender", "rh": None}, "rep": None}
 
 
 def test_broadcast_with_fhops_full_src_and_ack():
@@ -47,6 +47,7 @@ def test_transmitter_from_trace_and_fhops():
     assert parse(_unar(a, b))["tx"] == {"kind": "sender", "rh": None}
     assert parse(_unar(a, b, trace=b""))["tx"]["kind"] == "sender"
     assert parse(_unar(a, b, trace=bytes([0xAA, 0xBB, 0x50, 0x10])))["tx"] == {"kind": "repeater", "rh": "aabb"}
+    assert parse(_unar(a, b, trace=bytes([0xAA, 0xBB, 0x50, 0x10])))["rep"] == hint(bytes([0xAA, 0xBB]), 3)
     assert parse(_unar(a, b, trace=bytes([0xFE, 0xCC, 0xDD])))["tx"] == {"kind": "repeater", "rh": "ccdd"}
     assert parse(_unar(a, b, trace=b"\xff"))["tx"]["kind"] == "forwarded"
     assert parse(_unar(a, b, fhops=0x31))["tx"]["kind"] == "forwarded"

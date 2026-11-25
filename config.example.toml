@@ -10,6 +10,8 @@ dashboard_port = 8917
 node_port = "/dev/ttyACM0"
 ping_target = ""                       # base58 key of a node that answers pings
 
+# capture_dir = "~/Downloads/umsh-sdr-captures"   # where "Capture" (emission recordings) saves files
+
 [calibration]
 ppm = 0.0                              # run `umsh-sdr calibrate ppm --apply`
 gain_db = 49.6                         # run `umsh-sdr calibrate gain --apply`

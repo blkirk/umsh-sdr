@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emission Capture</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --border: #e2e1dc;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #85847f;
+  --grid: #ebeae6; --series-1: #2a78d6; --good: #0f7b3e; --warning: #a35f00; --critical: #c42b2b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --grid: #262624; --series-1: #3987e5; --good: #3fb871; --warning: #e0a03a; --critical: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --grid: #262624; --series-1: #3987e5; --good: #3fb871; --warning: #e0a03a; --critical: #e66767;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; padding: 16px 20px 4px; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+header a { color: var(--text-secondary); font-size: 13px; }
+main { padding: 8px 20px 32px; display: grid; gap: 16px; max-width: 1200px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.sub { color: var(--text-secondary); font-size: 12px; margin: 0 0 10px; }
+.chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+.btn { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-0); color: var(--text-primary); cursor: pointer; }
+.btn.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+input, select { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-0); color: var(--text-primary); }
+input[type=number] { width: 80px; }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--text-secondary); }
+dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0 12px; }
+.tile { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.tile .k { font-size: 12px; color: var(--text-secondary); }
+.tile .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .n { font-size: 12px; color: var(--text-muted); }
+.steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.steps span { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); }
+.steps span.on { color: var(--text-primary); border-color: var(--series-1); font-weight: 600; }
+.steps span.done { color: var(--good); }
+.bar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; margin: 8px 0; }
+.bar i { display: block; height: 100%; background: var(--series-1); width: 0; transition: width .5s linear; }
+.tablewrap { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+td.num, th.num { text-align: right; }
+.mono { font-family: ui-monospace, monospace; font-size: 12px; }
+td.hex { font-family: ui-monospace, monospace; color: var(--text-secondary); white-space: normal; word-break: break-all; min-width: 220px; }
+.muted { color: var(--text-muted); } .bad { color: var(--critical); } .ok { color: var(--good); } .warn { color: var(--warning); }
+ul.hints { margin: 4px 0 0; padding-left: 18px; } ul.hints li { margin: 3px 0; }
+img.plot { width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+pre { background: var(--surface-0); border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow: auto; max-height: 320px; font-size: 12px; }
+.hidden { display: none; }
+@media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } dl.kv { grid-template-columns: 1fr; } dl.kv dd { margin-bottom: 4px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Emission capture</h1>
+  <span class="chip" id="status">loading</span>
+  <a href="/">← dashboard</a>
+</header>
+<main>
+  <section class="card" id="proposal">
+    <h2>Proposal</h2>
+    <p class="sub" id="prop-sub">—</p>
+    <div class="tiles" id="seen"></div>
+    <dl class="kv" id="plan"></dl>
+    <p class="sub" style="margin-top:12px" id="pause-note"></p>
+    <p><button class="btn primary" id="go">Start capture</button> <span class="sub" id="go-why"></span></p>
+  </section>
+
+  <section class="card hidden" id="progress">
+    <h2>Progress</h2>
+    <div class="steps" id="steps"></div>
+    <div class="bar"><i id="bar"></i></div>
+    <p class="sub" id="prog-sub"></p>
+  </section>
+
+  <section class="card hidden" id="findings">
+    <h2>Findings</h2>
+    <p class="sub" id="find-sub"></p>
+    <div class="tiles" id="ftiles"></div>
+    <ul class="hints" id="hints"></ul>
+    <div id="decode"></div>
+  </section>
+
+  <section class="card hidden" id="plots">
+    <h2>Spectrogram</h2>
+    <p class="sub">The whole capture: dashed lines mark the slice; green boxes are bursts inside it, blue ones are other signals in the recorded passband.</p>
+    <img class="plot" id="ov" alt="Spectrogram of the whole capture">
+    <h2 style="margin-top:14px" id="burst-h">Strongest burst</h2>
+    <p class="sub">Close-up spectrogram, instantaneous frequency (dashed: the FSK levels found) and envelope.</p>
+    <img class="plot" id="bp" alt="Close-up of the strongest burst">
+  </section>
+
+  <section class="card hidden" id="bursts">
+    <h2>Bursts</h2>
+    <p class="sub" id="bursts-sub"></p>
+    <div class="tablewrap"><table id="bt"><thead><tr>
+      <th class="num">Time s</th><th class="num">Freq MHz</th><th class="num">BW kHz</th><th class="num">Dur ms</th>
+      <th class="num">SNR dB</th><th>In slice</th><th>Modulation</th><th class="num">Baud</th><th class="num">Dev kHz</th>
+      <th>Decode</th><th>Frame (hex)</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <section class="card hidden" id="r433">
+    <h2>rtl_433</h2>
+    <div id="r433-body"></div>
+  </section>
+
+  <section class="card hidden" id="files">
+    <h2>Files kept for later research</h2>
+    <p class="sub" id="folder"></p>
+    <div class="tablewrap"><table id="ft"><thead><tr><th>File</th><th class="num">Size</th><th>Contents</th></tr></thead><tbody></tbody></table></div>
+    <pre id="readme" class="hidden"></pre>
+  </section>
+
+  <section class="card" id="history">
+    <h2>Earlier captures</h2>
+    <div class="tablewrap"><table id="ht"><thead><tr><th>Started</th><th class="num">Slice MHz</th><th>BW</th><th class="num">Secs</th><th>Status</th><th>Modulation</th><th class="num">Bursts in slice</th></tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const BW = ["&lt; 25 kHz", "25–200 kHz", "200–600 kHz", "≥ 600 kHz"];
+const BWt = ["< 25 kHz", "25–200 kHz", "200–600 kHz", "≥ 600 kHz"];
+const mhz = (hz, n = 3) => (hz / 1e6).toFixed(n);
+const f = (v, n = 1) => v == null ? "—" : (+v).toFixed(n);
+const size = (b) => b == null ? "—" : b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${(b / 1e3).toFixed(0)} kB`;
+const fmtT = (t) => new Date(t * 1000).toLocaleString([], {hour12: false, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"});
+const q = new URLSearchParams(location.search);
+const ST = {id: q.get("id"), plan: null, rec: null, timer: null};
+
+function tile(k, v, n) { return `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div>${n ? `<div class="n">${n}</div>` : ""}</div>`; }
+
+// ---------- proposal ----------
+async function loadPlan() {
+  const p = new URLSearchParams({f_lo: q.get("f_lo"), f_hi: q.get("f_hi"), bb: q.get("bb")});
+  if ($("secs")) p.set("seconds", $("secs").value);
+  if ($("gain") && $("gain").value !== "") p.set("gain", $("gain").value);
+  const r = await fetch(`/api/capture/plan?${p}`), d = await r.json();
+  if (!d.ok) { $("status").textContent = "invalid"; $("prop-sub").textContent = d.reason; $("go").disabled = true; return; }
+  ST.plan = d; renderPlan();
+}
+function renderPlan() {
+  const d = ST.plan, p = d.plan, b = d.bucket;
+  const label = `${mhz(p.f_lo_hz)}–${mhz(p.f_hi_hz)} MHz, ${BWt[p.bw_bucket]}`;
+  $("title").textContent = `Capture ${label}`; document.title = `Capture ${mhz(p.f_lo_hz)} MHz`;
+  $("status").textContent = "proposal";
+  $("prop-sub").innerHTML = `Record the raw radio signal around <b>${esc(label)}</b> emissions, keep the file for later research, and analyse it: bandwidth, duration, modulation (OOK, FSK, chirp/LoRa, PSK, carrier), symbol rate, deviation, and a search for preambles, known sync words and Manchester coding.`;
+  $("seen").innerHTML = b ? [
+    tile("Seen in last 24 h", b.count, `${f(b.per_hour, 0)} per hour of capture`),
+    tile("Average duration", `${f(b.dur_ms, 0)} ms`, `duty ${f(b.duty_pct, 3)}%`),
+    tile("Average bandwidth", `${f(b.bw_khz)} kHz`, "as measured by the monitor"),
+    tile("Peak", `${f(b.peak_dbfs)} dBFS`, `max ${f(b.peak_max_dbfs)} dBFS`),
+    tile("Last seen", new Date(b.last * 1000).toLocaleTimeString([], {hour12: false}), b.in_channel ? "inside the UMSH channel" : "outside the UMSH channel"),
+  ].join("") : `<p class="sub">This bucket has no emissions in the last 24 h.</p>`;
+  const secsOpts = [10, 20, 30, 60, 120].concat([p.seconds]).filter((v, i, a) => a.indexOf(v) === i).sort((x, y) => x - y);
+  const prevGain = $("gain") ? $("gain").value : "";
+  $("plan").innerHTML = `
+    <dt>Tuner centre</dt><dd>${mhz(p.lo_hz, 6)} MHz <span class="muted">(${p.offset_hz ? `slice ${f(p.offset_hz / 1e3, 0)} kHz above, keeping the DC spike and IQ image out of it` : "slice at the centre; the DC spike is removed in analysis"})</span></dd>
+    <dt>Sample rate</dt><dd>${f(p.sample_rate / 1e6, 3)} MS/s, 8-bit I/Q <span class="muted">(analysed at ${f(p.slice_rate / 1e3, 0)} kS/s over ±${f(p.half_bw_hz / 1e3, 0)} kHz)</span></dd>
+    <dt><label for="secs">Duration</label></dt><dd><select id="secs">${secsOpts.map(v => `<option value="${v}" ${v === p.seconds ? "selected" : ""}>${v} s</option>`).join("")}</select>
+      <span class="muted">${p.expected_bursts != null ? `≈ ${p.expected_bursts} bursts expected at the 24 h rate` : ""}</span></dd>
+    <dt><label for="gain">Tuner gain</label></dt><dd><input id="gain" type="number" step="0.1" min="0" max="50" value="${prevGain || p.gain_db}"> dB <span class="muted">(channel-mode gain by default; lower it if the analysis reports clipping)</span></dd>
+    <dt>Frequency correction</dt><dd>${f(p.ppm, 1)} ppm</dd>
+    <dt>Raw file</dt><dd>${size(p.bytes)}</dd>
+    <dt>Saved to</dt><dd class="mono">${esc(p.dir)}/&lt;time&gt;_${mhz(p.fc_hz)}MHz_bw${p.bw_bucket}/</dd>`;
+  $("pause-note").innerHTML = `<b>UMSH monitoring pauses for about ${Math.round(p.pause_s)} s</b> while the radio is retuned and recording; no packets are decoded in that time. Decoding resumes automatically, and the analysis then runs in the background (usually under a minute).`;
+  $("secs").onchange = loadPlan; $("gain").onchange = loadPlan;
+  const busy = d.mode && (d.mode.mode === "sweep" || d.mode.mode === "capture");
+  $("go").disabled = !d.can_capture || busy;
+  $("go-why").innerHTML = !d.can_capture ? `${esc(d.reason)}. Without the daemon, run <span class="mono">umsh-sdr capture --f-lo ${mhz(p.f_lo_hz)} --f-hi ${mhz(p.f_hi_hz)} --bw-bucket ${p.bw_bucket} --seconds ${p.seconds}</span>`
+    : busy ? `The radio is busy (${esc(d.mode.mode)}); try again when it finishes.` : "";
+}
+$("go").onclick = async () => {
+  const p = ST.plan.plan;
+  $("go").disabled = true;
+  try {
+    const r = await fetch("/api/capture", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({f_lo: p.f_lo_hz, f_hi: p.f_hi_hz, bb: p.bw_bucket, seconds: +$("secs").value, gain: +$("gain").value})});
+    const d = await r.json();
+    if (!d.ok) { $("go").disabled = false; $("go-why").textContent = `Not started: ${d.reason}`; return; }
+    ST.id = d.id; history.replaceState(null, "", `/capture?id=${encodeURIComponent(d.id)}`);
+    $("proposal").classList.add("hidden"); poll();
+  } catch (e) { $("go").disabled = false; $("go-why").textContent = `Not started: ${e}`; }
+};
+
+// ---------- progress + results ----------
+const STEPS = [["queued", "Waiting for the radio"], ["recording", "Recording"], ["recorded", "Recorded"], ["analysing", "Analysing"], ["done", "Done"]];
+async function poll() {
+  clearTimeout(ST.timer);
+  try {
+    const r = await fetch(`/api/capture/${encodeURIComponent(ST.id)}`);
+    if (!r.ok) { $("status").textContent = "not found"; $("prog-sub").textContent = "No such capture."; $("progress").classList.remove("hidden"); return; }
+    ST.rec = await r.json(); renderRec();
+  } catch (e) { console.error(e); }
+  if (!ST.rec || ["queued", "recording", "recorded", "analysing"].includes(ST.rec.status)) ST.timer = setTimeout(poll, 1500);
+  else loadHistory();
+}
+function renderRec() {
+  const r = ST.rec, p = r.plan, st = r.status;
+  $("title").textContent = `Capture ${mhz(p.f_lo_hz)}–${mhz(p.f_hi_hz)} MHz, ${BWt[p.bw_bucket]}`;
+  document.title = `Capture ${mhz(p.f_lo_hz)} MHz`;
+  $("status").textContent = st; $("status").className = "chip " + (st === "done" ? "ok" : st === "error" || st === "cancelled" ? "bad" : "");
+  $("progress").classList.remove("hidden");
+  const idx = STEPS.findIndex(s => s[0] === st);
+  $("steps").innerHTML = STEPS.map((s, i) => `<span class="${i === idx ? "on" : i < idx ? "done" : ""}">${i < idx ? "✓ " : ""}${s[1]}</span>`).join("");
+  let pct = Math.max(0, idx) / (STEPS.length - 1) * 100, sub = "";
+  if (st === "queued") sub = "Stopping the UMSH channel session…";
+  if (st === "recording" && r.recording) {
+    const left = Math.max(0, r.recording.until - Date.now() / 1000);
+    pct = 25 + 25 * Math.min(1, 1 - left / (p.seconds + 2));
+    sub = `Recording ${p.seconds} s at ${mhz(p.lo_hz, 6)} MHz: about ${Math.ceil(left)} s left. UMSH decoding is paused.`;
+  }
+  if (st === "recorded" || st === "analysing") sub = "UMSH decoding has resumed. Analysing the recording in the background…";
+  if (st === "done") sub = `Recorded ${fmtT(r.recording.started)}; analysis took ${r.analysis.seconds_taken} s.`;
+  if (st === "error" || st === "cancelled") sub = r.error || st;
+  $("bar").style.width = `${pct}%`;
+  $("prog-sub").innerHTML = esc(sub) + (st === "error" ? ` <a href="/api/capture/${encodeURIComponent(r.id)}/file/analysis.log" target="_blank">analysis log</a>` : "");
+  if (r.analysis) renderAnalysis(r);
+  if (r.files && r.files.length) renderFiles(r);
+}
+function renderAnalysis(r) {
+  const a = r.analysis, s = a.summary, p = r.plan;
+  ["findings", "plots", "bursts", "r433"].forEach(id => $(id).classList.remove("hidden"));
+  const clip = a.clip_fraction > 1e-4 ? ` <span class="warn">${(a.clip_fraction * 100).toFixed(2)}% of samples clipped: lower the gain for cleaner analysis.</span>` : "";
+  $("find-sub").innerHTML = `${s.n_target} bursts inside the slice (${s.n_classified} classified), ${s.n_other} other signals in the recorded passband. Spectrogram cells are ${f(a.bin_hz / 1e3, 1)} kHz × ${f(a.frame_s * 1e3, 1)} ms.${clip}`;
+  const votes = Object.entries(s.modulation_votes || {}).map(([k, v]) => `${k} ${v}`).join(", ");
+  $("ftiles").innerHTML = [
+    tile("Modulation", esc(s.modulation || "—"), votes ? esc(votes) : "no burst classified"),
+    tile("Symbol rate", s.baud ? `${f(s.baud / 1e3, 2)} kBd` : "—", s.n_baud ? `median of ${s.n_baud} bursts` : "not resolved"),
+    tile("FSK deviation", s.deviation_hz ? `±${f(s.deviation_hz / 1e3, 1)} kHz` : "—", "outer, approximate"),
+    tile("Bandwidth", s.bw_hz ? `${f(s.bw_hz / 1e3, 1)} kHz` : "—", "99% power, median"),
+    tile("Duration", s.dur_ms ? `${f(s.dur_ms, 1)} ms` : "—", s.interval_s ? `every ${f(s.interval_s, 2)} s (median)` : ""),
+    tile("Frequencies", s.n_distinct_freqs, s.n_distinct_freqs > 1 ? "distinct, inside the slice (hopping?)" : "inside the slice"),
+  ].join("");
+  $("hints").innerHTML = (s.hints || []).map(h => `<li>${esc(h)}</li>`).join("");
+  const sync = Object.entries(s.sync_hits || {}), rep = Object.entries(s.repeated_frames || {});
+  $("decode").innerHTML = (sync.length ? `<p class="sub" style="margin-top:10px"><b>Sync words found:</b> ${sync.map(([k, v]) => `${esc(k)} in ${v} bursts`).join("; ")}.</p>` : `<p class="sub" style="margin-top:10px">No known sync word found. Decoded bits for each burst are in the table below.</p>`)
+    + (rep.length ? `<p class="sub"><b>Repeated frame starts:</b> ${rep.map(([k, v]) => `<span class="mono">${esc(k)}</span> ×${v}`).join(", ")}</p>` : "");
+  const base = `/api/capture/${encodeURIComponent(r.id)}/file/`;
+  $("ov").src = base + "overview.png";
+  const hasBurst = (r.files || []).some(x => x.name === "burst.png");
+  $("bp").classList.toggle("hidden", !hasBurst); $("burst-h").classList.toggle("hidden", !hasBurst);
+  if (hasBurst) $("bp").src = base + "burst.png";
+  const rows = a.bursts.filter(b => b.target).concat(a.bursts.filter(b => !b.target));
+  $("bursts-sub").textContent = `${a.n_bursts} bursts detected${a.n_bursts > a.bursts.length ? ` (first ${a.bursts.length} listed)` : ""}; bursts in the slice first. Up to 40 are analysed in detail. Bits are sliced with 1 = higher frequency (FSK) or carrier on (OOK).`;
+  $("bt").querySelector("tbody").innerHTML = rows.map(b => {
+    const d = b.decode || {};
+    const dec = [d.preamble_bits ? `preamble ${d.preamble_bits} b` : "", (d.sync || []).map(x => esc(x.label.split(" (")[0]) + ` @${x.bit}`).join(", "),
+                 d.manchester ? `Manchester (${(d.manchester.error_rate * 100).toFixed(0)}% err)` : ""].filter(Boolean).join("; ");
+    return `<tr${b.target ? "" : ' class="muted"'}><td class="num">${f(b.t0, 3)}</td><td class="num">${f(b.f_mhz, 4)}</td><td class="num">${f(b.bw / 1e3)}</td>
+      <td class="num">${f(b.dur_ms)}</td><td class="num">${f(b.snr_db)}</td><td>${b.target ? "yes" : "no"}${b.edge ? " (edge)" : ""}</td>
+      <td title="${esc((b.reasons || []).join("; "))}">${esc(b.modulation || "—")}</td><td class="num">${b.baud ? f(b.baud, 0) : "—"}</td>
+      <td class="num">${b.deviation_hz ? f(b.deviation_hz / 1e3, 1) : "—"}</td><td>${dec || (b.modulation ? '<span class="muted">—</span>' : "")}</td>
+      <td class="hex" title="${esc(d.frame_from || "")}">${esc((d.frame_hex || "").slice(0, 64))}</td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="muted">no bursts detected</td></tr>`;
+  const t = a.rtl_433;
+  $("r433-body").innerHTML = !t ? `<p class="sub">Not run (the capture was not decimated into a slice file).</p>`
+    : !t.available ? `<p class="sub">rtl_433 is not installed. It knows 200+ sub-GHz device protocols (sensors, meters, remotes): <span class="mono">sudo apt install rtl-433</span>, then re-run with <span class="mono">umsh-sdr analyse ${esc(r.folder || "")}</span>.</p>`
+    : `<p class="sub">${t.decoded.length ? `${t.decoded.length} messages decoded:` : "No device protocol recognised. Pulse analysis:"}</p><pre>${esc(t.decoded.length ? t.decoded.map(x => JSON.stringify(x)).join("\n") : t.analysis || "(no output)")}</pre>`;
+}
+async function renderFiles(r) {
+  $("files").classList.remove("hidden");
+  $("folder").innerHTML = `Folder: <span class="mono">${esc(r.folder)}</span>`;
+  $("ft").querySelector("tbody").innerHTML = r.files.map(x => `<tr><td class="mono">${esc(x.name)}</td><td class="num">${size(x.bytes)}</td><td style="white-space:normal">${esc(x.what)}</td></tr>`).join("");
+  if (r.files.some(x => x.name === "README.txt") && $("readme").classList.contains("hidden")) {
+    try { const t = await (await fetch(`/api/capture/${encodeURIComponent(r.id)}/file/README.txt`)).text(); $("readme").textContent = t; $("readme").classList.remove("hidden"); } catch (e) {}
+  }
+}
+async function loadHistory() {
+  try {
+    const rows = await (await fetch("/api/captures")).json();
+    $("ht").querySelector("tbody").innerHTML = rows.map(c => `<tr><td><a href="/capture?id=${encodeURIComponent(c.id)}">${fmtT(c.created)}</a></td>
+      <td class="num">${mhz(c.f_lo_hz)}–${mhz(c.f_hi_hz).slice(-3)}</td><td>${BW[c.bw_bucket]}</td><td class="num">${c.seconds}</td>
+      <td class="${c.status === "done" ? "ok" : c.status === "error" ? "bad" : ""}">${esc(c.status)}</td><td>${esc(c.modulation || "—")}</td><td class="num">${c.n_target ?? "—"}</td></tr>`).join("")
+      || `<tr><td colspan="7" class="muted">none yet</td></tr>`;
+  } catch (e) { console.error(e); }
+}
+if (ST.id) { $("proposal").classList.add("hidden"); poll(); }
+else if (q.get("f_lo")) loadPlan();
+else { $("proposal").classList.add("hidden"); $("status").textContent = "captures"; }
+loadHistory();
+</script>
+</body>
+</html>
